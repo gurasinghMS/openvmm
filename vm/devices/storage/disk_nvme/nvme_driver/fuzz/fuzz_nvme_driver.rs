@@ -31,8 +31,8 @@ pub struct FuzzNvmeDriver {
 impl FuzzNvmeDriver {
     /// Setup a new nvme driver with a fuzz-enabled backend device.
     pub async fn new(driver: DefaultDriver) -> Result<Self, arbitrary::Error> {
-        let base_len = 64 << 20; // 64MB TODO: [use-arbitrary-input]
-        let payload_len = 1 << 20; // 1MB TODO: [use-arbitrary-input]
+        let base_len = arbitrary_data::<usize>()?;
+        let payload_len = arbitrary_data::<usize>()?;
         let mem = DeviceSharedMemory::new(base_len, payload_len);
 
         // Trasfer buffer
@@ -52,20 +52,20 @@ impl FuzzNvmeDriver {
             &mut msi_set,
             &mut ExternallyManagedMmioIntercepts,
             NvmeControllerCaps {
-                msix_count: 2,     // TODO: [use-arbitrary-input]
-                max_io_queues: 64, // TODO: [use-arbitrary-input]
+                msix_count: arbitrary_data::<u16>()?,
+                max_io_queues: arbitrary_data::<u16>()?,
                 subsystem_id: guid,
             },
         );
 
         nvme.client()
-            .add_namespace(1, disklayer_ram::ram_disk(2 << 20, false).unwrap()) // TODO: [use-arbitrary-input]
+            .add_namespace(arbitrary_data::<u32>()?, disklayer_ram::ram_disk(arbitrary_data::<u64>()?, false).unwrap())
             .await
             .unwrap();
 
         let device = FuzzEmulatedDevice::new(nvme, msi_set, mem);
-        let nvme_driver = NvmeDriver::new(&driver_source, 64, device).await.unwrap(); // TODO: [use-arbitrary-input]
-        let namespace = nvme_driver.namespace(1).await.unwrap(); // TODO: [use-arbitrary-input]
+        let nvme_driver = NvmeDriver::new(&driver_source, arbitrary_data::<u32>()?, device).await.unwrap();
+        let namespace = nvme_driver.namespace(arbitrary_data::<u32>()?).await.unwrap();
 
         Ok(Self {
             driver: Some(nvme_driver),
@@ -75,20 +75,20 @@ impl FuzzNvmeDriver {
     }
 
     /// Clean up fuzzing infrastructure.
-    pub async fn shutdown(&mut self) {
+    pub async fn shutdown(&mut self) -> Result<(), arbitrary::Error> {
         self.namespace
             .deallocate(
-                0, // TODO: [use-arbitrary-input]
+                arbitrary_data::<u32>()?,
                 &[
                     DsmRange {
-                        context_attributes: 0, // TODO: [use-arbitrary-input]
-                        starting_lba: 1000,    // TODO: [use-arbitrary-input]
-                        lba_count: 2000,       // TODO: [use-arbitrary-input]
+                        context_attributes: arbitrary_data::<u32>()?,
+                        starting_lba: arbitrary_data::<u64>()?,
+                        lba_count: arbitrary_data::<u32>()?,
                     },
                     DsmRange {
-                        context_attributes: 0, // TODO: [use-arbitrary-input]
-                        starting_lba: 2,       // TODO: [use-arbitrary-input]
-                        lba_count: 2,          // TODO: [use-arbitrary-input]
+                        context_attributes: arbitrary_data::<u32>()?,
+                        starting_lba: arbitrary_data::<u64>()?,
+                        lba_count: arbitrary_data::<u32>()?,
                     },
                 ],
             )
@@ -96,6 +96,7 @@ impl FuzzNvmeDriver {
             .unwrap();
 
         self.driver.take().unwrap().shutdown().await;
+        Ok(())
     }
 
     /// Generates and executes an arbitrary NvmeDriverAction. Returns either an arbitrary error or the executed action.
@@ -108,7 +109,7 @@ impl FuzzNvmeDriver {
                 block_count,
                 target_cpu,
             } => {
-                let buf_range = OwnedRequestBuffers::linear(0, 16384, true); // TODO: [use-arbitrary-input]
+                let buf_range = OwnedRequestBuffers::linear(arbitrary_data::<u64>()?, arbitrary_data::<usize>()?, true);
                 self.namespace
                     .read(
                         target_cpu,
@@ -126,7 +127,7 @@ impl FuzzNvmeDriver {
                 block_count,
                 target_cpu,
             } => {
-                let buf_range = OwnedRequestBuffers::linear(0, 16384, true); // TODO: [use-arbitrary-input]
+                let buf_range = OwnedRequestBuffers::linear(arbitrary_data::<u64>()?, arbitrary_data::<usize>()?, true);
                 self.namespace
                     .write(
                         target_cpu,
