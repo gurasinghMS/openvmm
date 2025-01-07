@@ -76,25 +76,7 @@ impl FuzzNvmeDriver {
 
     /// Clean up fuzzing infrastructure.
     pub async fn shutdown(&mut self) -> Result<(), arbitrary::Error> {
-        self.namespace
-            .deallocate(
-                arbitrary_data::<u32>()?,
-                &[
-                    DsmRange {
-                        context_attributes: arbitrary_data::<u32>()?,
-                        starting_lba: arbitrary_data::<u64>()?,
-                        lba_count: arbitrary_data::<u32>()?,
-                    },
-                    DsmRange {
-                        context_attributes: arbitrary_data::<u32>()?,
-                        starting_lba: arbitrary_data::<u64>()?,
-                        lba_count: arbitrary_data::<u32>()?,
-                    },
-                ],
-            )
-            .await
-            .unwrap();
-
+        // TODO: Add a feature here to wipe memory that was written to the namespace by the fuzzer.
         self.driver.take().unwrap().shutdown().await;
         Ok(())
     }
