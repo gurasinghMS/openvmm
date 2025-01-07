@@ -75,12 +75,11 @@ impl FuzzNvmeDriver {
     }
 
     /// Clean up fuzzing infrastructure.
-    pub async fn shutdown(&mut self) -> Result<(), arbitrary::Error> {
+    pub async fn shutdown(&mut self) {
         // TODO: Add a feature here to wipe memory that was written to the namespace by the fuzzer.
         // Since the fuzzer is deterministic, this is not immediately needed.
 
         self.driver.take().unwrap().shutdown().await;
-        Ok(())
     }
 
     /// Generates and executes an arbitrary NvmeDriverAction. Returns either an arbitrary error or the executed action.
