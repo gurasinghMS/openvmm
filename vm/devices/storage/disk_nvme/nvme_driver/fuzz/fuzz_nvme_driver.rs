@@ -58,14 +58,15 @@ impl FuzzNvmeDriver {
             },
         );
 
+        let nsid = arbitrary_data::<u32>()?;
         nvme.client()
-            .add_namespace(arbitrary_data::<u32>()?, disklayer_ram::ram_disk(arbitrary_data::<u64>()?, false).unwrap())
+            .add_namespace(nsid, disklayer_ram::ram_disk(arbitrary_data::<u64>()?, false).unwrap())
             .await
             .unwrap();
 
         let device = FuzzEmulatedDevice::new(nvme, msi_set, mem);
         let nvme_driver = NvmeDriver::new(&driver_source, arbitrary_data::<u32>()?, device).await.unwrap();
-        let namespace = nvme_driver.namespace(arbitrary_data::<u32>()?).await.unwrap();
+        let namespace = nvme_driver.namespace(nsid).await.unwrap();
 
         Ok(Self {
             driver: Some(nvme_driver),
