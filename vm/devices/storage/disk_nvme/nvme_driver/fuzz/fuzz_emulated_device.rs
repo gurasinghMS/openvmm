@@ -18,11 +18,18 @@ use user_driver::emulated::EmulatedDmaAllocator;
 use user_driver::emulated::Mapping;
 use user_driver::interrupt::DeviceInterrupt;
 use user_driver::DeviceBacking;
+use user_driver::DeviceRegisterIo;
 
 /// An EmulatedDevice fuzzer that requires a working EmulatedDevice backend.
 #[derive(Inspect)]
 pub struct FuzzEmulatedDevice<T: InspectMut> {
     device: EmulatedDevice<T>,
+}
+
+/// A Mapping fuzzer that requires a working Mapping back end.
+#[derive(Inspect)]
+pub struct FuzzMapping<T> {
+    mapping: Mapping<T>
 }
 
 impl<T: PciConfigSpace + MmioIntercept + InspectMut> FuzzEmulatedDevice<T> {
@@ -36,7 +43,7 @@ impl<T: PciConfigSpace + MmioIntercept + InspectMut> FuzzEmulatedDevice<T> {
 
 /// Implementation for DeviceBacking trait.
 impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for FuzzEmulatedDevice<T> {
-    type Registers = Mapping<T>;
+    type Registers = FuzzMapping<T>;
     type DmaAllocator = EmulatedDmaAllocator;
 
     fn id(&self) -> &str {
@@ -44,7 +51,9 @@ impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for FuzzEmula
     }
 
     fn map_bar(&mut self, n: u8) -> anyhow::Result<Self::Registers> {
-        self.device.map_bar(n)
+        Ok(FuzzMapping {
+            mapping: self.device.map_bar(n)?,
+        })
     }
 
     fn host_allocator(&self) -> Self::DmaAllocator {
@@ -55,7 +64,6 @@ impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for FuzzEmula
     fn max_interrupt_count(&self) -> u32 {
         // Case: Fuzz response
         if let Ok(true) = arbitrary_data::<bool>() {
-            // Return an abritrary u32
             if let Ok(num) = arbitrary_data::<u32>() {
                 return num;
             }
@@ -67,5 +75,37 @@ impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for FuzzEmula
 
     fn map_interrupt(&mut self, msix: u32, _cpu: u32) -> anyhow::Result<DeviceInterrupt> {
         self.device.map_interrupt(msix, _cpu)
+    }
+}
+
+
+/// Allow the fuzzer to intercept read/write calls to the underlying Mapping type
+impl<T: MmioIntercept + Send> DeviceRegisterIo for FuzzMapping<T> {
+    fn read_u32(&self, offset: usize) -> u32 {
+        if let Ok(true) = arbitrary_data::<bool>() {
+            if let Ok(data) = arbitrary_data::<u32>() {
+                return data;
+            }
+        }
+
+        self.mapping.read_u32(offset)
+    }
+
+    fn read_u64(&self, offset: usize) -> u64 {
+        if let Ok(true) = arbitrary_data::<bool>() {
+            if let Ok(data) = arbitrary_data::<u64>() {
+                return data;
+            }
+        }
+
+        self.mapping.read_u64(offset)
+    }
+
+    fn write_u32(&self, offset: usize, data: u32) {
+        self.mapping.write_u32(offset, data)
+    }
+
+    fn write_u64(&self, offset: usize, data: u64) {
+        self.mapping.write_u64(offset, data)
     }
 }
