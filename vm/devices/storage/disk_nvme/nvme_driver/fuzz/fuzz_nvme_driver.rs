@@ -45,7 +45,7 @@ impl FuzzNvmeDriver {
             .unwrap();
 
         // Nvme device and driver setup
-        let driver_source = VmTaskDriverSource::new(SingleDriverBackend::new(driver));
+        let driver_source = VmTaskDriverSource::new(SingleDriverBackend::new(driver.clone()));
         let mut msi_set = MsiInterruptSet::new();
 
         let guid = arbitrary_guid()?;
@@ -67,7 +67,13 @@ impl FuzzNvmeDriver {
             .unwrap();
 
         let device = FuzzEmulatedDevice::new(nvme, msi_set, mem);
-        let nvme_driver = NvmeDriver::new(&driver_source, cpu_count, device).await?; // TODO: [use-arbitrary-input]
+
+        // Backoff to let the shutdown thread take over if driver initializaiton fails
+        let mut backoff = user_driver::backoff::Backoff::new(&driver);
+        let nvme_driver_fut = NvmeDriver::new(&driver_source, cpu_count, device); // TODO: [use-arbitrary-input]
+        backoff.back_off().await;
+        let nvme_driver = nvme_driver_fut.await?;
+
         let namespace = nvme_driver.namespace(1).await?; // TODO: [use-arbitrary-input]
 
         Ok(Self {

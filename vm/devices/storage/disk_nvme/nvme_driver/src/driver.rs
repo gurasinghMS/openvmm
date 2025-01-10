@@ -27,6 +27,8 @@ use pal_async::task::Task;
 use save_restore::NvmeDriverWorkerSavedState;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::thread;
+use std::time::Duration;
 use task_control::AsyncRun;
 use task_control::InspectTask;
 use task_control::TaskControl;

@@ -274,7 +274,7 @@ impl QueuePair {
 
     pub async fn shutdown(mut self) -> impl Send {
         self.cancel.cancel();
-        self.task.await
+        self.task.cancel()
     }
 
     /// Save queue pair state for servicing.

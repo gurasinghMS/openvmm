@@ -49,6 +49,7 @@ fn do_fuzz() {
             return;
         }
 
+
         let mut fuzzing_driver = create_fuzzing_driver.unwrap();
 
         loop {
