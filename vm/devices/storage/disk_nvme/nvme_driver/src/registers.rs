@@ -113,6 +113,11 @@ impl<T: DeviceRegisterIo + Inspect> Bar0<T> {
             if !csts.rdy() {
                 break true;
             }
+            if csts.cfs() {  // This reset function is called as part of a cfs related failure, do
+                             // we really want to just recheck this bit after resetting. Maybe a
+                             // timeout or max_backoff count might be more appropriate here?
+                break false;
+            }
             if u32::from(csts) == !0 {
                 break false;
             }
