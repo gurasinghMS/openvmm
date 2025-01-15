@@ -18,11 +18,18 @@ use user_driver::emulated::EmulatedDmaAllocator;
 use user_driver::emulated::Mapping;
 use user_driver::interrupt::DeviceInterrupt;
 use user_driver::DeviceBacking;
+use user_driver::DeviceRegisterIo;
 
 /// An EmulatedDevice fuzzer that requires a working EmulatedDevice backend.
 #[derive(Inspect)]
 pub struct FuzzEmulatedDevice<T: InspectMut> {
     device: EmulatedDevice<T>,
+}
+
+/// A Mapping fuzzer that requires a working Mapping back end.
+#[derive(Inspect)]
+pub struct FuzzMapping<T> {
+    mapping: Mapping<T>
 }
 
 impl<T: PciConfigSpace + MmioIntercept + InspectMut> FuzzEmulatedDevice<T> {
@@ -36,7 +43,7 @@ impl<T: PciConfigSpace + MmioIntercept + InspectMut> FuzzEmulatedDevice<T> {
 
 /// Implementation for DeviceBacking trait.
 impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for FuzzEmulatedDevice<T> {
-    type Registers = Mapping<T>;
+    type Registers = FuzzMapping<T>;
     type DmaAllocator = EmulatedDmaAllocator;
 
     fn id(&self) -> &str {
@@ -44,7 +51,9 @@ impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for FuzzEmula
     }
 
     fn map_bar(&mut self, n: u8) -> anyhow::Result<Self::Registers> {
-        self.device.map_bar(n)
+        Ok(FuzzMapping {
+            mapping: self.device.map_bar(n)?,
+        })
     }
 
     fn host_allocator(&self) -> Self::DmaAllocator {
@@ -67,5 +76,44 @@ impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for FuzzEmula
 
     fn map_interrupt(&mut self, msix: u32, _cpu: u32) -> anyhow::Result<DeviceInterrupt> {
         self.device.map_interrupt(msix, _cpu)
+    }
+}
+
+/// Allow the fuzzer to intercept read/write calls to the underlying Mapping type
+impl<T: MmioIntercept + Send> DeviceRegisterIo for FuzzMapping<T> {
+    fn read_u32(&self, offset: usize) -> u32 {
+        if let Ok(true) = arbitrary_data::<bool>() {
+            if let Ok(data) = arbitrary_data::<u32>() {
+                println!("Responding (fake) read u32 at offset {} with {}", offset, data);
+                return data;
+            }
+        }
+
+        let val = self.mapping.read_u32(offset);
+        println!("Responding (real) read u32 at offset {} with {}", offset, val);
+        val
+    }
+
+    fn read_u64(&self, offset: usize) -> u64 {
+        if let Ok(true) = arbitrary_data::<bool>() {
+            if let Ok(data) = arbitrary_data::<u64>() {
+                println!("Responding (fake) read u64 at offset {} with {}", offset, data);
+                return data;
+            }
+        }
+
+        let val = self.mapping.read_u64(offset);
+        println!("Responding (real) read u64 at offset {} with {}", offset, val);
+        val
+    }
+
+    fn write_u32(&self, offset: usize, data: u32) {
+        println!("Writing u32 offset {} with {}", offset, data);
+        self.mapping.write_u32(offset, data)
+    }
+
+    fn write_u64(&self, offset: usize, data: u64) {
+        println!("Writing u64 offset {} with {}", offset, data);
+        self.mapping.write_u64(offset, data)
     }
 }
