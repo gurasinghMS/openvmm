@@ -34,7 +34,7 @@ use std::sync::Arc;
 pub struct EmulatedDevice<T> {
     device: Arc<Mutex<T>>,
     controller: MsiController,
-    shared_mem: DeviceSharedMemory,
+    shared_mem: Arc<Mutex<DeviceSharedMemory>>,
     bar0_len: usize,
 }
 
@@ -73,7 +73,7 @@ impl MsiInterruptTarget for MsiController {
 
 impl<T: PciConfigSpace + MmioIntercept> EmulatedDevice<T> {
     /// Creates a new emulated device, wrapping `device`, using the provided MSI controller.
-    pub fn new(mut device: T, msi_set: MsiInterruptSet, shared_mem: DeviceSharedMemory) -> Self {
+    pub fn new(mut device: T, msi_set: MsiInterruptSet, shared_mem: Arc<Mutex<DeviceSharedMemory>>) -> Self {
         // Connect an interrupt controller.
         let controller = MsiController::new(msi_set.len());
         msi_set.connect(&controller);
@@ -317,8 +317,9 @@ impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for EmulatedD
 
     /// Returns an object that can allocate host memory to be shared with the device.
     fn host_allocator(&self) -> Self::DmaAllocator {
+        let mem = self.shared_mem.lock();
         EmulatedDmaAllocator {
-            shared_mem: self.shared_mem.clone(),
+            shared_mem: mem.clone(),
         }
     }
 
