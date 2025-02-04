@@ -349,7 +349,7 @@ async fn test_nvme_save_restore_inner(driver: DefaultDriver) {
     let new_emu_mem_ref = Arc::new(Mutex::new(new_emu_mem));
     let _new_device = EmulatedDevice::new(new_nvme_ctrl, new_msi_x, new_emu_mem_ref.clone());
     // TODO: Memory restore is disabled for emulated DMA, uncomment once fixed.
-    // let _new_nvme_driver = NvmeDriver::restore(&driver_source, CPU_COUNT, _new_device, &saved_state)
-    //     .await
-    //     .unwrap();
+    let _new_nvme_driver = NvmeDriver::restore(&driver_source, CPU_COUNT, _new_device, &saved_state)
+        .await
+        .unwrap();
 }

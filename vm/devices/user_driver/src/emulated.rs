@@ -224,6 +224,20 @@ impl DeviceSharedMemory {
             state: self.state.clone(),
         })
     }
+
+    pub fn alloc_specific(&self, len: usize, base_pfn: u64) -> Option<DmaBuffer>{
+        assert!(len % PAGE_SIZE == 0);
+        let count = len / PAGE_SIZE;
+        let start_page = base_pfn as usize;
+
+        let pages = (start_page..start_page + count).map(|p| p as u64).collect();
+        Some(DmaBuffer {
+            mem: self.mem.clone(),
+            pfns: pages,
+            state: self.state.clone(),
+        })
+
+    }
 }
 
 pub struct DmaBuffer {
@@ -278,8 +292,10 @@ impl HostDmaAllocator for EmulatedDmaAllocator {
         Ok(memory)
     }
 
-    fn attach_dma_buffer(&self, _len: usize, _base_pfn: u64) -> anyhow::Result<MemoryBlock> {
-        anyhow::bail!("restore is not supported for emulated DMA")
+    fn attach_dma_buffer(&self, len: usize, base_pfn: u64) -> anyhow::Result<MemoryBlock> {
+        let locked_shared_mem = self.shared_mem.lock();
+        let memory = MemoryBlock::new(locked_shared_mem.alloc_specific(len, base_pfn).context("out of memory")?);
+        Ok(memory)
     }
 }
 
