@@ -267,12 +267,13 @@ unsafe impl MappedDmaTarget for DmaBuffer {
 }
 
 pub struct EmulatedDmaAllocator {
-    shared_mem: DeviceSharedMemory,
+    shared_mem: Arc<Mutex<DeviceSharedMemory>>,
 }
 
 impl HostDmaAllocator for EmulatedDmaAllocator {
     fn allocate_dma_buffer(&self, len: usize) -> anyhow::Result<MemoryBlock> {
-        let memory = MemoryBlock::new(self.shared_mem.alloc(len).context("out of memory")?);
+        let locked_shared_mem = self.shared_mem.lock();
+        let memory = MemoryBlock::new(locked_shared_mem.alloc(len).context("out of memory")?);
         memory.as_slice().atomic_fill(0);
         Ok(memory)
     }
@@ -286,8 +287,9 @@ impl HostDmaAllocator for EmulatedDmaAllocator {
 #[cfg(feature = "vfio")]
 impl crate::vfio::VfioDmaBuffer for EmulatedDmaAllocator {
     fn create_dma_buffer(&self, len: usize) -> anyhow::Result<MemoryBlock> {
+        let locked_shared_mem = self.shared_mem.lock();
         Ok(MemoryBlock::new(
-            self.shared_mem.alloc(len).context("out of memory")?,
+            locked_shared_mem.alloc(len).context("out of memory")?,
         ))
     }
 
@@ -317,9 +319,8 @@ impl<T: 'static + Send + InspectMut + MmioIntercept> DeviceBacking for EmulatedD
 
     /// Returns an object that can allocate host memory to be shared with the device.
     fn host_allocator(&self) -> Self::DmaAllocator {
-        let mem = self.shared_mem.lock();
         EmulatedDmaAllocator {
-            shared_mem: mem.clone(),
+            shared_mem: self.shared_mem.clone(),
         }
     }
 
