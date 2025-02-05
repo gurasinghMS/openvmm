@@ -236,7 +236,6 @@ impl DeviceSharedMemory {
             pfns: pages,
             state: self.state.clone(),
         })
-
     }
 }
 

@@ -679,6 +679,24 @@ impl<T: DeviceBacking> NvmeDriver<T> {
     pub fn update_servicing_flags(&mut self, nvme_keepalive: bool) {
         self.nvme_keepalive = nvme_keepalive;
     }
+
+    /// Byte by byte verifies the queues and buffers associated with the nvme_driver
+    pub(crate) async fn verify_restore(&mut self, restore_state: NvmeDriverSavedState) -> bool {
+        let task = &mut self.task.as_mut().unwrap();
+        task.stop().await;
+        let worker = task.task();
+        let mut response: bool = false;
+
+        // Verify that the admin queue details are correct.
+        if let Some(admin_queue) = restore_state.worker_data.admin {
+            if let Some(real_admin_queue) = &worker.admin {
+                response = real_admin_queue.verify_restore(admin_queue.sq_entries);
+            }
+        }
+
+        task.start();
+        response
+    }
 }
 
 async fn handle_asynchronous_events(

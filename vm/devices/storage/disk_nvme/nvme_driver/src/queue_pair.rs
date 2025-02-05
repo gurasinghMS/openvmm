@@ -325,6 +325,10 @@ impl QueuePair {
             Some(handler_data),
         )
     }
+
+    pub(crate) fn verify_restore(&self, sq_entries: u16) -> bool {
+       self.sq_entries == sq_entries 
+    }
 }
 
 /// An error issuing an NVMe request.
