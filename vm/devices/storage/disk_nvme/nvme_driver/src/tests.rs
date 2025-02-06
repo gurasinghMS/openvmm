@@ -75,8 +75,7 @@ async fn test_nvme_driver_save_restore(driver: DefaultDriver, allow_dma: bool) {
         .await
         .unwrap();
 
-    let mem_ref = Arc::new(Mutex::new(mem));
-    let device = EmulatedDevice::new(nvme, msi_set, mem_ref.clone());
+    let device = EmulatedDevice::new(nvme, msi_set, mem.clone());
 
     let driver = NvmeDriver::new(&driver_source, CPU_COUNT, device)
         .await
@@ -197,8 +196,7 @@ async fn test_nvme_driver(driver: DefaultDriver, allow_dma: bool) {
         .await
         .unwrap();
 
-    let mem_ref = Arc::new(Mutex::new(mem));
-    let device = EmulatedDevice::new(nvme, msi_set, mem_ref.clone());
+    let device = EmulatedDevice::new(nvme, msi_set, mem.clone());
 
     let driver = NvmeDriver::new(&driver_source, CPU_COUNT, device)
         .await
@@ -310,8 +308,7 @@ async fn test_nvme_save_restore_inner(driver: DefaultDriver) {
         .unwrap();
 
     // ===== FIRST DRIVER INIT =====
-    let mem_ref = Arc::new(Mutex::new(mem));
-    let device = EmulatedDevice::new(nvme_ctrl, msi_x, mem_ref.clone());
+    let device = EmulatedDevice::new(nvme_ctrl, msi_x, mem.clone());
     let mut nvme_driver = NvmeDriver::new(&driver_source, CPU_COUNT, device)
         .await
         .unwrap();
@@ -350,20 +347,17 @@ async fn test_nvme_save_restore_inner(driver: DefaultDriver) {
     // Wait for CSTS.RDY to set.
     backoff.back_off().await;
 
-    let device_memory_clone = {
-        mem_ref.lock().clone()
-    };
+    let device_memory_clone = mem.clone();
 
     // ====== SECOND DRIVER INIT =====
-    // let new_emu_mem_ref = Arc::new(Mutex::new(new_emu_mem));
-    let _new_device = EmulatedDevice::new(new_nvme_ctrl, new_msi_x, mem_ref.clone());
+    let _new_device = EmulatedDevice::new(new_nvme_ctrl, new_msi_x, mem.clone());
     let mut new_nvme_driver = NvmeDriver::restore(&driver_source, CPU_COUNT, _new_device, &saved_state)
         .await
         .unwrap();
 
 
     // ===== VERIFY RESTORE =====
-    let dma_allocator = EmulatedDmaAllocator::new(Arc::new(Mutex::new(device_memory_clone)));
+    let dma_allocator = EmulatedDmaAllocator::new(device_memory_clone);
     let verify = new_nvme_driver.verify_restore(saved_state, dma_allocator).await;
     println!("Verify was {} ", verify);
     assert!(verify);

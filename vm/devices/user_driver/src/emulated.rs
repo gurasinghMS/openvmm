@@ -34,7 +34,7 @@ use std::sync::Arc;
 pub struct EmulatedDevice<T> {
     device: Arc<Mutex<T>>,
     controller: MsiController,
-    shared_mem: Arc<Mutex<DeviceSharedMemory>>,
+    shared_mem: DeviceSharedMemory,
     bar0_len: usize,
 }
 
@@ -73,7 +73,7 @@ impl MsiInterruptTarget for MsiController {
 
 impl<T: PciConfigSpace + MmioIntercept> EmulatedDevice<T> {
     /// Creates a new emulated device, wrapping `device`, using the provided MSI controller.
-    pub fn new(mut device: T, msi_set: MsiInterruptSet, shared_mem: Arc<Mutex<DeviceSharedMemory>>) -> Self {
+    pub fn new(mut device: T, msi_set: MsiInterruptSet, shared_mem: DeviceSharedMemory) -> Self {
         // Connect an interrupt controller.
         let controller = MsiController::new(msi_set.len());
         msi_set.connect(&controller);
@@ -280,11 +280,11 @@ unsafe impl MappedDmaTarget for DmaBuffer {
 }
 
 pub struct EmulatedDmaAllocator {
-    shared_mem: Arc<Mutex<DeviceSharedMemory>>,
+    shared_mem: DeviceSharedMemory,
 }
 
 impl EmulatedDmaAllocator {
-    pub fn new(shared_mem: Arc<Mutex<DeviceSharedMemory>>) -> Self {
+    pub fn new(shared_mem: DeviceSharedMemory) -> Self {
         Self {
             shared_mem,
         }
@@ -293,15 +293,13 @@ impl EmulatedDmaAllocator {
 
 impl HostDmaAllocator for EmulatedDmaAllocator {
     fn allocate_dma_buffer(&self, len: usize) -> anyhow::Result<MemoryBlock> {
-        let locked_shared_mem = self.shared_mem.lock();
-        let memory = MemoryBlock::new(locked_shared_mem.alloc(len).context("out of memory")?);
+        let memory = MemoryBlock::new(self.shared_mem.alloc(len).context("out of memory")?);
         memory.as_slice().atomic_fill(0);
         Ok(memory)
     }
 
     fn attach_dma_buffer(&self, len: usize, base_pfn: u64) -> anyhow::Result<MemoryBlock> {
-        let locked_shared_mem = self.shared_mem.lock();
-        let memory = MemoryBlock::new(locked_shared_mem.alloc_specific(len, base_pfn).context("out of memory")?);
+        let memory = MemoryBlock::new( self.shared_mem.alloc_specific(len, base_pfn).context("out of memory")?);
         Ok(memory)
     }
 }
@@ -310,9 +308,8 @@ impl HostDmaAllocator for EmulatedDmaAllocator {
 #[cfg(feature = "vfio")]
 impl crate::vfio::VfioDmaBuffer for EmulatedDmaAllocator {
     fn create_dma_buffer(&self, len: usize) -> anyhow::Result<MemoryBlock> {
-        let locked_shared_mem = self.shared_mem.lock();
         Ok(MemoryBlock::new(
-            locked_shared_mem.alloc(len).context("out of memory")?,
+            self.shared_mem.alloc(len).context("out of memory")?,
         ))
     }
 
