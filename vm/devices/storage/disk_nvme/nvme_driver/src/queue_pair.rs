@@ -326,8 +326,40 @@ impl QueuePair {
         )
     }
 
-    pub(crate) fn verify_restore(&self, sq_entries: u16) -> bool {
-       self.sq_entries == sq_entries 
+    pub(crate) fn verify_restore(&self, qid: u16, sq_entries: u16, cq_entries: u16, mem: &MemoryBlock) -> bool {
+        if self.qid != qid {
+            return false;
+        }
+
+        if self.sq_entries != sq_entries {
+            return false;
+        }
+
+        if self.cq_entries != cq_entries {
+            return false;
+        }
+
+        // Verify that the bytes in memory are identital.
+        let mut self_mem_data: [u8; 1] = [0; 1];
+        let mut test_mem_data: [u8; 1] = [0; 1];
+        let self_mem = self.mem.as_slice(); 
+        let test_mem = mem.as_slice();
+    
+        if self_mem.len() != test_mem.len() {
+            return false;
+        }
+
+        for i in 0..self_mem.len() {
+            self.mem.read_at(i, &mut self_mem_data);
+            mem.read_at(i, &mut test_mem_data);
+
+            if self_mem_data[0] != test_mem_data[0] {
+                return false;
+            }
+        }
+
+        // Objects are identital
+        return true;
     }
 }
 

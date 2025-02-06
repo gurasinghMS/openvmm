@@ -283,6 +283,14 @@ pub struct EmulatedDmaAllocator {
     shared_mem: Arc<Mutex<DeviceSharedMemory>>,
 }
 
+impl EmulatedDmaAllocator {
+    pub fn new(shared_mem: Arc<Mutex<DeviceSharedMemory>>) -> Self {
+        Self {
+            shared_mem,
+        }
+    }
+}
+
 impl HostDmaAllocator for EmulatedDmaAllocator {
     fn allocate_dma_buffer(&self, len: usize) -> anyhow::Result<MemoryBlock> {
         let locked_shared_mem = self.shared_mem.lock();

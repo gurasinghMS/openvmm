@@ -17,6 +17,7 @@ use user_driver::emulated::DeviceSharedMemory;
 use user_driver::emulated::EmulatedDevice;
 use vmcore::vm_task::SingleDriverBackend;
 use vmcore::vm_task::VmTaskDriverSource;
+use user_driver::emulated::EmulatedDmaAllocator;
 use zerocopy::AsBytes;
 
 #[async_test]
@@ -279,6 +280,7 @@ async fn test_nvme_driver(driver: DefaultDriver, allow_dma: bool) {
 }
 
 async fn test_nvme_save_restore_inner(driver: DefaultDriver) {
+    // ======= SHARED RESOURCES =====
     const MSIX_COUNT: u16 = 2;
     const IO_QUEUE_COUNT: u16 = 64;
     const CPU_COUNT: u32 = 64;
@@ -307,6 +309,7 @@ async fn test_nvme_save_restore_inner(driver: DefaultDriver) {
         .await
         .unwrap();
 
+    // ===== FIRST DRIVER INIT =====
     let mem_ref = Arc::new(Mutex::new(mem));
     let device = EmulatedDevice::new(nvme_ctrl, msi_x, mem_ref.clone());
     let mut nvme_driver = NvmeDriver::new(&driver_source, CPU_COUNT, device)
@@ -347,14 +350,21 @@ async fn test_nvme_save_restore_inner(driver: DefaultDriver) {
     // Wait for CSTS.RDY to set.
     backoff.back_off().await;
 
+    let device_memory_clone = {
+        mem_ref.lock().clone()
+    };
+
+    // ====== SECOND DRIVER INIT =====
     // let new_emu_mem_ref = Arc::new(Mutex::new(new_emu_mem));
     let _new_device = EmulatedDevice::new(new_nvme_ctrl, new_msi_x, mem_ref.clone());
-    // TODO: Memory restore is disabled for emulated DMA, uncomment once fixed.
     let mut new_nvme_driver = NvmeDriver::restore(&driver_source, CPU_COUNT, _new_device, &saved_state)
         .await
         .unwrap();
 
-    let verify = new_nvme_driver.verify_restore(saved_state).await;
+
+    // ===== VERIFY RESTORE =====
+    let dma_allocator = EmulatedDmaAllocator::new(Arc::new(Mutex::new(device_memory_clone)));
+    let verify = new_nvme_driver.verify_restore(saved_state, dma_allocator).await;
     println!("Verify was {} ", verify);
     assert!(verify);
 }

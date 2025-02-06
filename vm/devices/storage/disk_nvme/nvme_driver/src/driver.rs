@@ -34,9 +34,11 @@ use thiserror::Error;
 use tracing::info_span;
 use tracing::Instrument;
 use user_driver::backoff::Backoff;
+use user_driver::emulated::DeviceSharedMemory;
 use user_driver::interrupt::DeviceInterrupt;
 use user_driver::memory::MemoryBlock;
 use user_driver::DeviceBacking;
+use user_driver::emulated::EmulatedDmaAllocator;
 use user_driver::HostDmaAllocator;
 use vmcore::vm_task::VmTaskDriver;
 use vmcore::vm_task::VmTaskDriverSource;
@@ -681,16 +683,16 @@ impl<T: DeviceBacking> NvmeDriver<T> {
     }
 
     /// Byte by byte verifies the queues and buffers associated with the nvme_driver
-    pub(crate) async fn verify_restore(&mut self, restore_state: NvmeDriverSavedState) -> bool {
+    pub(crate) async fn verify_restore(&mut self, restore_state: NvmeDriverSavedState, dma_allocator: EmulatedDmaAllocator) -> bool {
         let task = &mut self.task.as_mut().unwrap();
         task.stop().await;
         let worker = task.task();
         let mut response: bool = false;
 
-        // Verify that the admin queue details are correct.
+        // Verify the Admin Queue.
         if let Some(admin_queue) = restore_state.worker_data.admin {
             if let Some(real_admin_queue) = &worker.admin {
-                response = real_admin_queue.verify_restore(admin_queue.sq_entries);
+                response = real_admin_queue.verify_restore(admin_queue.qid, admin_queue.sq_entries, admin_queue.cq_entries,&dma_allocator.attach_dma_buffer(admin_queue.mem_len, admin_queue.base_pfn).unwrap());
             }
         }
 
