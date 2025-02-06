@@ -225,6 +225,21 @@ impl DeviceSharedMemory {
             state: self.state.clone(),
         })
     }
+
+    // TODO: [nvme-keepalive-testing] 
+    // This is only a stop-gap until we can swap out the back end of nvme tests to use real memory
+    pub fn alloc_specific(&self, len: usize, base_pfn: u64) -> Option<DmaBuffer>{
+        assert!(len % PAGE_SIZE == 0);
+        let count = len / PAGE_SIZE;
+        let start_page = base_pfn as usize;
+
+        let pages = (start_page..start_page + count).map(|p| p as u64).collect();
+        Some(DmaBuffer {
+            mem: self.mem.clone(),
+            pfns: pages,
+            state: self.state.clone(),
+        })
+    }
 }
 
 pub struct DmaBuffer {
@@ -271,6 +286,16 @@ pub struct EmulatedDmaAllocator {
     shared_mem: DeviceSharedMemory,
 }
 
+// TODO: [nvme-keepalive-testing] 
+// This is only a stop-gap until we can swap out the back end of nvme tests to use real memory
+impl EmulatedDmaAllocator {
+    pub fn new(shared_mem: DeviceSharedMemory) -> Self {
+        Self {
+            shared_mem,
+        }
+    }
+}
+
 impl HostDmaAllocator for EmulatedDmaAllocator {
     fn allocate_dma_buffer(&self, len: usize) -> anyhow::Result<MemoryBlock> {
         let memory = MemoryBlock::new(self.shared_mem.alloc(len).context("out of memory")?);
@@ -278,8 +303,11 @@ impl HostDmaAllocator for EmulatedDmaAllocator {
         Ok(memory)
     }
 
-    fn attach_dma_buffer(&self, _len: usize, _base_pfn: u64) -> anyhow::Result<MemoryBlock> {
-        anyhow::bail!("restore is not supported for emulated DMA")
+    // TODO: [nvme-keepalive-testing] 
+    // This is only a stop-gap until we can swap out the back end of nvme tests to use real memory
+    fn attach_dma_buffer(&self, len: usize, base_pfn: u64) -> anyhow::Result<MemoryBlock> {
+        let memory = MemoryBlock::new( self.shared_mem.alloc_specific(len, base_pfn).context("out of memory")?);
+        Ok(memory)
     }
 }
 
