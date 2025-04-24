@@ -48,7 +48,7 @@ const INVALID_PAGE_ADDR: u64 = !(PAGE_SIZE as u64 - 1);
 /// Memory allocator errors.
 #[derive(Debug, Error)]
 pub enum AllocatorError {
-    #[error("no fallback allocator")]
+    #[error("no fallback mem allocator")]
     NoFallbackAllocator,
 }
 
@@ -60,7 +60,7 @@ pub(crate) struct QueuePair {
     qid: u16,
     sq_entries: u16,
     cq_entries: u16,
-    fallback_alloc_used: bool,
+    fallback_alloc: u64,
 }
 
 impl Inspect for QueuePair {
@@ -73,7 +73,7 @@ impl Inspect for QueuePair {
             qid: _,
             sq_entries: _,
             cq_entries: _,
-            fallback_alloc_used: _,
+            fallback_alloc: _,
         } = self;
         issuer.send.send(Req::Inspect(req.defer()));
     }
@@ -209,18 +209,18 @@ impl QueuePair {
                 QueuePair::PER_QUEUE_PAGES_NO_BOUNCE_BUFFER * PAGE_SIZE
             };
 
-        let mut fallback_involved = false;
+        let mut fallback_alloc = 0u64;
         let dma_client = device.dma_client();
         let mem = dma_client
             .allocate_dma_buffer(total_size)
             .context("failed to allocate memory for the queues")
             .or_else(|_| {
-                fallback_involved = true;
+                fallback_alloc += total_size as u64;
                 device.fallback_dma_client().map_or(
                     Err(AllocatorError::NoFallbackAllocator.into()),
                     |f| {
                         f.allocate_dma_buffer(total_size)
-                            .context("fallback allocator also failed")
+                            .context("fallback mem allocator also failed")
                     },
                 )
             });
@@ -235,7 +235,7 @@ impl QueuePair {
             mem?,
             None,
             bounce_buffer,
-            fallback_involved,
+            fallback_alloc,
         )
     }
 
@@ -250,7 +250,7 @@ impl QueuePair {
         mem: MemoryBlock,
         saved_state: Option<&QueueHandlerSavedState>,
         bounce_buffer: bool,
-        fallback_alloc_used: bool,
+        fallback_alloc: u64,
     ) -> anyhow::Result<Self> {
         // MemoryBlock is either allocated or restored prior calling here.
         let sq_mem_block = mem.subblock(0, QueuePair::SQ_SIZE);
@@ -317,7 +317,7 @@ impl QueuePair {
             qid,
             sq_entries,
             cq_entries,
-            fallback_alloc_used,
+            fallback_alloc,
         })
     }
 
@@ -339,8 +339,8 @@ impl QueuePair {
     }
 
     /// Indicates that fallback allocator was used for this queue pair.
-    pub fn fallback_used(&self) -> bool {
-        self.fallback_alloc_used
+    pub fn fallback_alloc(&self) -> u64 {
+        self.fallback_alloc
     }
 
     /// Save queue pair state for servicing.
@@ -391,7 +391,7 @@ impl QueuePair {
             mem,
             Some(handler_data),
             bounce_buffer,
-            false,
+            0u64,
         )
     }
 }
