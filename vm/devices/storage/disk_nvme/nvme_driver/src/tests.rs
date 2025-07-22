@@ -344,10 +344,11 @@ async fn test_nvme_controller_fi(driver: DefaultDriver, allow_dma: bool) {
             max_io_queues: IO_QUEUE_COUNT,
             subsystem_id: Guid::new_random(),
         },
-        CellUpdater::<Duration>::new(Duration::from_millis(100)),
+        CellUpdater::<Duration>::new(Duration::from_millis(10000)).cell(),
     );
 
     nvme.read_bar0(0, vec![0; 4].as_mut_slice()).unwrap();
+    nvme.write_bar0(0, vec![0; 4].as_mut_slice()).unwrap();
     nvme.client() // 2MB namespace
         .add_namespace(1, disklayer_ram::ram_disk(2 << 20, false).unwrap())
         .await

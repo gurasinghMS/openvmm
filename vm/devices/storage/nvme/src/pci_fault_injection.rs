@@ -1,26 +1,25 @@
+use crate::DOORBELL_STRIDE_BITS;
 use crate::NvmeController;
 use crate::NvmeControllerCaps;
 use crate::NvmeControllerClient;
 use crate::spec;
 use chipset_device::ChipsetDevice;
+use chipset_device::io::IoError;
+use chipset_device::io::IoError::InvalidRegister;
 use chipset_device::io::IoResult;
 use chipset_device::io::deferred::DeferredRead;
 use chipset_device::io::deferred::DeferredWrite;
-use chipset_device::io::deferred::defer_write;
 use chipset_device::mmio::MmioIntercept;
 use chipset_device::mmio::RegisterMmioIntercept;
 use chipset_device::pci::PciConfigSpace;
-use chipset_device::poll_device::PollDevice;
 use guestmem::GuestMemory;
 use inspect::Inspect;
 use inspect::InspectMut;
 use mesh::Cell;
-use mesh::CellUpdater;
 use pal_async::timer::PolledTimer;
 use pci_core::msi::RegisterMsi;
 use std::future::Future;
 use std::pin::Pin;
-use std::task::Poll;
 use std::task::Waker;
 use std::time::Duration;
 use vmcore::device_state::ChangeDeviceState;
@@ -61,7 +60,7 @@ pub struct NvmeControllerFaultInjection {
     #[inspect(skip)]
     inner: NvmeController,
     #[inspect(hex, with = "|x| inspect::AsDebug(x.get())")]
-    admin_delay: CellUpdater<Duration>,
+    admin_delay: Cell<Duration>,
     #[inspect(skip)]
     admin_pending_action: Option<DeferredAction>,
     #[inspect(skip)]
@@ -84,7 +83,7 @@ impl NvmeControllerFaultInjection {
         register_msi: &mut dyn RegisterMsi,
         register_mmio: &mut dyn RegisterMmioIntercept,
         caps: NvmeControllerCaps,
-        admin_delay: CellUpdater<Duration>,
+        admin_delay: Cell<Duration>,
     ) -> Self {
         Self {
             driver: driver_source.simple(),
@@ -112,26 +111,26 @@ impl NvmeControllerFaultInjection {
     }
 
     /// Writes to the virtual BAR 0.
-    pub fn write_bar0(&mut self, addr: u16, data: &[u8]) -> IoResult {
-        tracing::trace!(?addr, "Bar 0 write");
-        let (write, token) = defer_write();
-        assert!(self.admin_pending_action.is_none());
-
-        let fut = {
-            let driver = self.driver.clone();
-            let delay = self.admin_delay.get();
-            let data = data.to_vec();
-            async move {
-                PolledTimer::new(&driver).sleep(delay).await;
-                (addr, data)
+    pub async fn write_bar0(&mut self, addr: u16, data: &[u8]) -> IoResult {
+        if addr >= 0x1000 {
+            // Doorbell write.
+            let base = addr - 0x1000;
+            let index = base >> DOORBELL_STRIDE_BITS;
+            if (index << DOORBELL_STRIDE_BITS) != base {
+                return IoResult::Err(InvalidRegister);
             }
-        };
-
-        self.admin_pending_action = Some(DeferredAction::Write(write, Box::pin(fut)));
-        if let Some(waker) = self.waker.take() {
-            waker.wake();
+            let Ok(data) = data.try_into() else {
+                return IoResult::Err(IoError::InvalidAccessSize);
+            };
+            let _ = u32::from_ne_bytes(data);
+            if index == 0 {
+                PolledTimer::new(&self.driver)
+                    .sleep(self.admin_delay.get())
+                    .await;
+            }
         }
-        IoResult::Defer(token)
+
+        self.inner.write_bar0(addr, data)
     }
 
     pub fn fatal_error(&mut self) {
@@ -197,22 +196,4 @@ impl SaveRestore for NvmeControllerFaultInjection {
         self.inner.restore(state)
     }
 }
-
-impl PollDevice for NvmeControllerFaultInjection {
-    fn poll_device(&mut self, cx: &mut std::task::Context<'_>) {
-        self.waker = Some(cx.waker().clone());
-        if let Some(action) = self.admin_pending_action.take() {
-            match action {
-                DeferredAction::Write(dw, mut fut) => {
-                    if let Poll::Ready((addr, data)) = fut.as_mut().poll(cx) {
-                        self.inner.write_bar0(addr, &data);
-                        dw.complete();
-                    } else {
-                        self.admin_pending_action = Some(DeferredAction::Write(dw, fut));
-                    }
-                }
-                DeferredAction::Read(_, _) => {}
-            }
-        };
-    }
-}
+I
