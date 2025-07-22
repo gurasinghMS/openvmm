@@ -8,6 +8,8 @@ use chipset_device::pci::PciConfigSpace;
 use guid::Guid;
 use inspect::Inspect;
 use inspect::InspectMut;
+use mesh::Cell;
+use mesh::CellUpdater;
 use nvme::FaultInjectionAction;
 use nvme::NvmeControllerCaps;
 use nvme_spec::Cap;
@@ -19,6 +21,7 @@ use pci_core::msi::MsiInterruptSet;
 use scsi_buffers::OwnedRequestBuffers;
 use std::any::Any;
 use std::sync::Arc;
+use std::time::Duration;
 use test_with_tracing::test;
 use user_driver::DeviceBacking;
 use user_driver::DeviceRegisterIo;
@@ -341,8 +344,7 @@ async fn test_nvme_controller_fi(driver: DefaultDriver, allow_dma: bool) {
             max_io_queues: IO_QUEUE_COUNT,
             subsystem_id: Guid::new_random(),
         },
-        Box::new(fault_controller),
-        pages,
+        CellUpdater::<Duration>::new(Duration::from_millis(100)),
     );
 
     nvme.read_bar0(0, vec![0; 4].as_mut_slice()).unwrap();

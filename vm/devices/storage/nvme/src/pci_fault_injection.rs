@@ -15,6 +15,7 @@ use guestmem::GuestMemory;
 use inspect::Inspect;
 use inspect::InspectMut;
 use mesh::Cell;
+use mesh::CellUpdater;
 use pal_async::timer::PolledTimer;
 use pci_core::msi::RegisterMsi;
 use std::future::Future;
@@ -60,7 +61,7 @@ pub struct NvmeControllerFaultInjection {
     #[inspect(skip)]
     inner: NvmeController,
     #[inspect(hex, with = "|x| inspect::AsDebug(x.get())")]
-    admin_delay: Cell<Duration>,
+    admin_delay: CellUpdater<Duration>,
     #[inspect(skip)]
     admin_pending_action: Option<DeferredAction>,
     #[inspect(skip)]
@@ -83,7 +84,7 @@ impl NvmeControllerFaultInjection {
         register_msi: &mut dyn RegisterMsi,
         register_mmio: &mut dyn RegisterMmioIntercept,
         caps: NvmeControllerCaps,
-        admin_delay: Cell<Duration>,
+        admin_delay: CellUpdater<Duration>,
     ) -> Self {
         Self {
             driver: driver_source.simple(),
