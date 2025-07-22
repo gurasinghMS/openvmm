@@ -1,22 +1,26 @@
-use crate::DOORBELL_STRIDE_BITS;
 use crate::NvmeController;
 use crate::NvmeControllerCaps;
 use crate::NvmeControllerClient;
 use crate::spec;
 use chipset_device::ChipsetDevice;
-use chipset_device::io::IoError;
-use chipset_device::io::IoError::InvalidRegister;
 use chipset_device::io::IoResult;
+use chipset_device::io::deferred::DeferredRead;
+use chipset_device::io::deferred::DeferredWrite;
+use chipset_device::io::deferred::defer_write;
 use chipset_device::mmio::MmioIntercept;
 use chipset_device::mmio::RegisterMmioIntercept;
 use chipset_device::pci::PciConfigSpace;
+use chipset_device::poll_device::PollDevice;
 use guestmem::GuestMemory;
 use inspect::Inspect;
 use inspect::InspectMut;
 use mesh::Cell;
 use pal_async::timer::PolledTimer;
 use pci_core::msi::RegisterMsi;
-use std::any::Any;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Poll;
+use std::task::Waker;
 use std::time::Duration;
 use vmcore::device_state::ChangeDeviceState;
 use vmcore::save_restore::SaveError;
@@ -24,6 +28,14 @@ use vmcore::save_restore::SaveRestore;
 use vmcore::save_restore::SavedStateNotSupported;
 use vmcore::vm_task::VmTaskDriver;
 use vmcore::vm_task::VmTaskDriverSource;
+
+enum DeferredAction {
+    Read(DeferredRead, Pin<Box<dyn Future<Output = u32> + Send>>),
+    Write(
+        DeferredWrite,
+        Pin<Box<dyn Future<Output = (u16, Vec<u8>)> + Send>>,
+    ),
+}
 
 // The function can respond with two types of actions.
 #[derive(Debug, Clone)]
@@ -49,6 +61,10 @@ pub struct NvmeControllerFaultInjection {
     inner: NvmeController,
     #[inspect(hex, with = "|x| inspect::AsDebug(x.get())")]
     admin_delay: Cell<Duration>,
+    #[inspect(skip)]
+    admin_pending_action: Option<DeferredAction>,
+    #[inspect(skip)]
+    waker: Option<Waker>,
 }
 
 #[derive(Inspect)]
@@ -79,6 +95,8 @@ impl NvmeControllerFaultInjection {
                 caps,
             ),
             admin_delay,
+            admin_pending_action: None,
+            waker: None,
         }
     }
 
@@ -94,47 +112,29 @@ impl NvmeControllerFaultInjection {
 
     /// Writes to the virtual BAR 0.
     pub fn write_bar0(&mut self, addr: u16, data: &[u8]) -> IoResult {
-        if addr >= 0x1000 {
-            // Doorbell write.
-            let base = addr - 0x1000;
-            let index = base >> DOORBELL_STRIDE_BITS;
-            if (index << DOORBELL_STRIDE_BITS) != base {
-                return IoResult::Err(InvalidRegister);
-            }
-            let Ok(data) = data.try_into() else {
-                return IoResult::Err(IoError::InvalidAccessSize);
-            };
-            let _ = u32::from_ne_bytes(data);
-            // Delay only the Admin Submission Queue doorbell writes.
-            if index == 0 {
-                async {
-                    PolledTimer::new(&self.driver)
-                        .sleep(self.admin_delay.get())
-                        .await
-                };
-            }
-        }
+        tracing::trace!(?addr, "Bar 0 write");
+        let (write, token) = defer_write();
+        assert!(self.admin_pending_action.is_none());
 
-        // Handled all queue related jargon, let the inner controller handle the rest
-        self.inner.write_bar0(addr, data)
+        let fut = {
+            let driver = self.driver.clone();
+            let delay = self.admin_delay.get();
+            let data = data.to_vec();
+            async move {
+                PolledTimer::new(&driver).sleep(delay).await;
+                (addr, data)
+            }
+        };
+
+        self.admin_pending_action = Some(DeferredAction::Write(write, Box::pin(fut)));
+        if let Some(waker) = self.waker.take() {
+            waker.wake();
+        }
+        IoResult::Defer(token)
     }
 
     pub fn fatal_error(&mut self) {
         self.inner.fatal_error();
-    }
-
-    fn set_cc(&mut self, cc: spec::Cc) {
-        let mask: u32 = u32::from(
-            spec::Cc::new()
-                .with_en(true)
-                .with_shn(0b11)
-                .with_iosqes(0b1111)
-                .with_iocqes(0b1111),
-        );
-        let mut cc: spec::Cc = (u32::from(cc) & mask).into();
-        if !self.admin.is_running() {}
-
-        self.regs.cc = cc;
     }
 }
 
@@ -194,5 +194,24 @@ impl SaveRestore for NvmeControllerFaultInjection {
         state: Self::SavedState,
     ) -> Result<(), vmcore::save_restore::RestoreError> {
         self.inner.restore(state)
+    }
+}
+
+impl PollDevice for NvmeControllerFaultInjection {
+    fn poll_device(&mut self, cx: &mut std::task::Context<'_>) {
+        self.waker = Some(cx.waker().clone());
+        if let Some(action) = self.admin_pending_action.take() {
+            match action {
+                DeferredAction::Write(dw, mut fut) => {
+                    if let Poll::Ready((addr, data)) = fut.as_mut().poll(cx) {
+                        self.inner.write_bar0(addr, &data);
+                        dw.complete();
+                    } else {
+                        self.admin_pending_action = Some(DeferredAction::Write(dw, fut));
+                    }
+                }
+                DeferredAction::Read(_, _) => {}
+            }
+        };
     }
 }
