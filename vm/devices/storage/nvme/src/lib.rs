@@ -6,16 +6,19 @@
 #![forbid(unsafe_code)]
 
 mod error;
+mod fault_injection;
 mod namespace;
 mod pci;
 mod prp;
 mod queue;
 pub mod resolver;
-mod workers;
+pub mod workers;
 
 #[cfg(test)]
 mod tests;
 
+pub use fault_injection::pci::FaultInjectionAction;
+pub use fault_injection::pci::NvmeControllerFaultInjection;
 pub use pci::NvmeController;
 pub use pci::NvmeControllerCaps;
 pub use workers::NsidConflict;
