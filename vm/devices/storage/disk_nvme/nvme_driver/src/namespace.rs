@@ -530,6 +530,7 @@ impl Namespace {
     /// TODO: Re-enable namespace save/restore once we confirm
     /// that we can process namespace change AEN.
     pub fn save(&self) -> anyhow::Result<SavedNamespaceData> {
+        // The namespace needs to store more information maybe?
         Ok(SavedNamespaceData {
             nsid: self.nsid,
             identify_ns: self.state.identify.lock().clone(),
@@ -545,6 +546,9 @@ impl Namespace {
         io_issuers: &Arc<IoIssuers>,
         saved_state: &SavedNamespaceData,
     ) -> Result<Self, NamespaceError> {
+        // This is fine for the time being. Namespace changes should be made during restore in the driver.
+        // Before AENs are processed this function should first be used to restore the namespace we want
+        // to compare against.
         let SavedNamespaceData { nsid, identify_ns } = saved_state;
 
         Namespace::new_from_identify(

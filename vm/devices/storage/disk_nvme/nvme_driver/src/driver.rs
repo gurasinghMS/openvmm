@@ -538,14 +538,15 @@ impl<T: DeviceBacking> NvmeDriver<T> {
             .call(NvmeWorkerRequest::Save, ())
             .await?
         {
-            Ok(s) => {
+            Ok(mut s) => {
                 // TODO: The decision is to re-query namespace data after the restore.
                 // Leaving the code in place so it can be restored in future.
                 // The reason is uncertainty about namespace change during servicing.
                 // ------
-                // for ns in &self.namespaces {
-                //     s.namespaces.push(ns.save()?);
-                // }
+                // This should be added back in
+                for ns in &self.namespaces {
+                    s.namespaces.push(ns.save()?);
+                }
                 Ok(NvmeDriverSavedState {
                     identify_ctrl: spec::IdentifyController::read_from_bytes(
                         self.identify.as_ref().unwrap().as_bytes(),
@@ -559,6 +560,11 @@ impl<T: DeviceBacking> NvmeDriver<T> {
             }
             Err(e) => Err(e),
         }
+
+        // During save we need some logic that will make sure that there was an outstanding AER to the underlying
+        // controller. So the logic should go something like: Check to see if there was an outstanding AER sent by the driver
+        // If there wasn't, send one, save the cid and save the state -> service. If there was one, we need to look for
+        // completions with that cid. I believe that is what we do during "drain" of the queues.
     }
 
     /// Restores NVMe driver state after servicing.
@@ -719,6 +725,9 @@ impl<T: DeviceBacking> NvmeDriver<T> {
             // TODO: Current approach is to re-query namespace data after servicing
             // and this array will be empty. Once we confirm that we can process
             // namespace change notification AEN, the restore code will be re-added.
+
+            // At this point the queues should already be restored. however they are not functional
+            // quite yet as the task has not yet been started. Do we even need any logic here?
             this.namespaces.push(Arc::new(Namespace::restore(
                 &driver,
                 admin.issuer().clone(),
@@ -753,6 +762,7 @@ async fn handle_asynchronous_events(
 
         let dw0 = spec::AsynchronousEventRequestDw0::from(completion.dw0);
         match spec::AsynchronousEventType(dw0.event_type()) {
+            // This should probably be also checking what the "NOTICE" subtype actually is.
             spec::AsynchronousEventType::NOTICE => {
                 tracing::info!("namespace attribute change event");
 
@@ -997,6 +1007,7 @@ impl<T: DeviceBacking> DriverWorkerTask<T> {
         &mut self,
         worker_state: &mut WorkerState,
     ) -> anyhow::Result<NvmeDriverWorkerSavedState> {
+        // What if there is already a completion in the admin queue for the AER that we already issued out earlier?
         let admin = match self.admin.as_ref() {
             Some(a) => Some(a.save().await?),
             None => None,
@@ -1069,6 +1080,8 @@ pub mod save_restore {
         /// Max number of IO queue pairs.
         #[mesh(4)]
         pub max_io_queues: u16,
+        #[mesh(5)]
+        pub namespaces: Vec<SavedNamespaceData>,
     }
 
     /// Save/restore state for QueuePair.
