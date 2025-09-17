@@ -683,6 +683,8 @@ impl QueueHandler {
                 .await
             } else {
                 // Only process in-flight completions.
+                // TODO: Write a test that sends some commands and hangs them to figure out how we are handling commands during save/restore. Are these commands
+                // being cancelled or are they just hanging around? What happens when they are completed?
                 poll_fn(|cx| {
                     while !self.commands.is_empty() {
                         if let Some(completion) = self.cq.read() {

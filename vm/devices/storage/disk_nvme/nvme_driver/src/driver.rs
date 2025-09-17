@@ -759,10 +759,14 @@ async fn handle_asynchronous_events(
             .issue_neither(admin_cmd(spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST))
             .await
             .context("asynchronous event request failed")?;
+        // Should this error out when the async event request completes with an error? Can write a test to verify this functionality. If we do error
+        // out.
 
         let dw0 = spec::AsynchronousEventRequestDw0::from(completion.dw0);
         match spec::AsynchronousEventType(dw0.event_type()) {
             // This should probably be also checking what the "NOTICE" subtype actually is.
+
+            // TODO: Keepalive save -> inspect -> Keepalive restore.
             spec::AsynchronousEventType::NOTICE => {
                 tracing::info!("namespace attribute change event");
 
