@@ -157,7 +157,6 @@ function parseRunData(xmlText: string, queryClient: QueryClient): RunData[] {
     });
   }
 
-  // TODO: Trigger background data prefetching of runDetails in future PR.
   opportunisticPrefetching(runs, queryClient);
   return runs;
 }
