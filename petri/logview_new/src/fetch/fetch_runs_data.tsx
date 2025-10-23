@@ -414,12 +414,7 @@ export async function fetchRunDetails(
     } while (continuationToken);
 
     // Parse all collected data at once
-    const result = parseRunDetails(allXmlData, runNumber, queryClient);
-
-    // Sort all tests by name
-    result.tests.sort((a, b) => a.name.localeCompare(b.name));
-    
-    return result;
+    return parseRunDetails(allXmlData, runNumber, queryClient);
   } catch (error) {
     console.error(`Error fetching run details`, error);
     throw error;
