@@ -158,6 +158,7 @@ export async function fetchProcessedLog(
     const source = rec.source || (rec.attachment ? "attachment" : "unknown");
 
     message = removeTimestampPrefix(message, new Date(timestamp));
+
     const sevExtract = extractSeverity(message, severity);
     message = sevExtract.message;
     severity = sevExtract.severity;

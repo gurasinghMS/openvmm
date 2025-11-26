@@ -97,6 +97,24 @@ export function LogViewer(): React.JSX.Element {
         gcTime: Infinity,
     });
 
+    useEffect(() => {
+        if (!logEntries) return;
+        logEntries.forEach(entry => {
+            const fields = [
+                { key: 'message', value: entry.message },
+                { key: 'severity', value: entry.severity },
+                { key: 'source', value: entry.source },
+                { key: 'timestamp', value: entry.timestamp },
+                { key: 'screenshot', value: entry.screenshot }
+            ];
+            fields.forEach(({ key, value }) => {
+                if (typeof value === 'string' && (value.startsWith('\n') || value.endsWith('\n'))) {
+                    console.log(`Log entry ${key} starts or ends with newline:`, value);
+                }
+            });
+        });
+    }, [logEntries]);
+
     // Define columns for the virtualized table
     const columns = useMemo(() => createColumns(setScreenshot), []);
 

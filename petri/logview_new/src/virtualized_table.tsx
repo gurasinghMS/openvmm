@@ -1,7 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   flexRender,
@@ -70,6 +77,15 @@ export function VirtualizedTable<TData extends object>({
 
   const { rows } = table.getRowModel();
 
+  const visibleLeafColumns = table.getVisibleLeafColumns();
+  const columnOrderById = useMemo(() => {
+    const map = new Map<string, number>();
+    visibleLeafColumns.forEach((col, index) => {
+      map.set(col.id, index);
+    });
+    return map;
+  }, [visibleLeafColumns]);
+
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const headerWrapperRef = useRef<HTMLDivElement>(null);
   const [headerHeight, setHeaderHeight] = useState(25.5); // Initial estimate
@@ -116,8 +132,144 @@ export function VirtualizedTable<TData extends object>({
     }
   }, [scrollToIndex, rowVirtualizer, rows.length]);
 
+  const handleCopy = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        return;
+      }
+
+      const selectedCells = collectSelectedCells(selection);
+      if (selectedCells.length === 0 || !event.clipboardData) {
+        return;
+      }
+
+      const selectedRowIndices = new Set<number>();
+      const selectedColumnIds = new Set<string>();
+      const cellContent = new Map<
+        number,
+        Map<
+          string,
+          {
+            html: string;
+            text: string;
+          }
+        >
+      >();
+
+      for (const cell of selectedCells) {
+        const rowIndexAttr = cell.getAttribute("data-row-index");
+        const columnId = cell.getAttribute("data-column-id");
+        if (rowIndexAttr == null || columnId == null) {
+          continue;
+        }
+
+        const rowIndex = Number(rowIndexAttr);
+        if (!Number.isFinite(rowIndex)) {
+          continue;
+        }
+
+        selectedRowIndices.add(rowIndex);
+        selectedColumnIds.add(columnId);
+
+        const forRow = cellContent.get(rowIndex) ?? new Map();
+        forRow.set(columnId, {
+          html: cell.innerHTML,
+          text: cell.innerText ?? cell.textContent ?? "",
+        });
+        cellContent.set(rowIndex, forRow);
+      }
+
+      if (selectedRowIndices.size === 0 || selectedColumnIds.size === 0) {
+        return;
+      }
+
+      const sortedRows = Array.from(selectedRowIndices).sort((a, b) => a - b);
+      const sortedColumnIds = Array.from(selectedColumnIds).sort((a, b) => {
+        const left = columnOrderById.get(a) ?? Number.MAX_SAFE_INTEGER;
+        const right = columnOrderById.get(b) ?? Number.MAX_SAFE_INTEGER;
+        if (left === right) {
+          return a.localeCompare(b);
+        }
+        return left - right;
+      });
+
+      const headerHtmlCells: string[] = [];
+      const headerPlainCells: string[] = [];
+      for (const columnId of sortedColumnIds) {
+        const headerEl = Array.from(
+          document.querySelectorAll<HTMLTableCellElement>(
+            "th[data-column-id]"
+          )
+        ).find((candidate) => candidate.getAttribute("data-column-id") === columnId);
+        const headerContent =
+          headerEl?.querySelector<HTMLElement>(
+            ".virtualized-table-header-content"
+          ) ?? headerEl;
+        const headerText = headerContent?.textContent?.trim();
+        const finalHeaderText = headerText && headerText.length > 0
+          ? headerText
+          : columnId;
+        headerHtmlCells.push(`<th>${escapeHtml(finalHeaderText)}</th>`);
+        headerPlainCells.push(finalHeaderText);
+      }
+
+      const htmlBodyRows: string[] = [];
+      const plainRows: string[] = [];
+
+      for (const rowIndex of sortedRows) {
+        const rowMap = cellContent.get(rowIndex);
+        if (!rowMap) {
+          continue;
+        }
+
+        const htmlCells: string[] = [];
+        const plainCells: string[] = [];
+
+        for (const columnId of sortedColumnIds) {
+          const cellValue = rowMap.get(columnId);
+          if (!cellValue) {
+            htmlCells.push("<td></td>");
+            plainCells.push("");
+            continue;
+          }
+
+          htmlCells.push(`<td>${cellValue.html}</td>`);
+          plainCells.push(cellValue.text.replace(/\s+/g, " ").trim());
+        }
+
+        htmlBodyRows.push(`<tr>${htmlCells.join("")}</tr>`);
+        plainRows.push(plainCells.join("\t"));
+      }
+
+      if (htmlBodyRows.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const tableHtmlParts = ["<table>"];
+      if (headerHtmlCells.length > 0) {
+        tableHtmlParts.push(`<thead><tr>${headerHtmlCells.join("")}</tr></thead>`);
+      }
+      tableHtmlParts.push(`<tbody>${htmlBodyRows.join("")}</tbody></table>`);
+
+      const htmlPayload = tableHtmlParts.join("");
+      const plainPayload = [
+        ...(headerHtmlCells.length > 0
+          ? [headerPlainCells.join("\t")]
+          : []),
+        ...plainRows,
+      ].join("\n");
+
+      event.clipboardData.setData("text/html", htmlPayload);
+      event.clipboardData.setData("text/plain", plainPayload);
+    },
+    [columnOrderById]
+  );
+
   return (
-    <div>
+    <div onCopy={handleCopy}>
       <div
         ref={headerWrapperRef}
         className="virtualized-table-header-container"
@@ -130,6 +282,7 @@ export function VirtualizedTable<TData extends object>({
                   return (
                     <th
                       key={header.id}
+                      data-column-id={header.column.id}
                       className={header.column.getCanSort() ? "sortable" : ""}
                       onClick={header.column.getToggleSortingHandler()}
                       style={{
@@ -196,6 +349,8 @@ export function VirtualizedTable<TData extends object>({
                         return (
                           <td
                             key={cell.id}
+                            data-row-index={virtualRow.index}
+                            data-column-id={cell.column.id}
                             style={{
                               boxSizing: "border-box",
                               width: columnWidthMap[cell.column.id],
@@ -218,4 +373,61 @@ export function VirtualizedTable<TData extends object>({
       </div>
     </div>
   );
+}
+
+function collectSelectedCells(selection: Selection): HTMLTableCellElement[] {
+  const cells = new Set<HTMLTableCellElement>();
+  for (let i = 0; i < selection.rangeCount; i += 1) {
+    const range = selection.getRangeAt(i);
+    collectCellsInRange(range, cells);
+  }
+  return Array.from(cells);
+}
+
+function collectCellsInRange(
+  range: Range,
+  target: Set<HTMLTableCellElement>
+): void {
+  const root = range.commonAncestorContainer;
+  const walker = document.createTreeWalker(
+    root,
+    NodeFilter.SHOW_ELEMENT,
+    {
+      acceptNode: (node: Node) => {
+        if (!(node instanceof HTMLElement)) {
+          return NodeFilter.FILTER_SKIP;
+        }
+        if (!(node instanceof HTMLTableCellElement)) {
+          return NodeFilter.FILTER_SKIP;
+        }
+        return range.intersectsNode(node)
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_SKIP;
+      },
+    }
+  );
+
+  const rootNode = walker.currentNode;
+  if (
+    rootNode instanceof HTMLTableCellElement &&
+    range.intersectsNode(rootNode)
+  ) {
+    target.add(rootNode);
+  }
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (node instanceof HTMLTableCellElement) {
+      target.add(node);
+    }
+  }
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
