@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
   flexRender,
@@ -81,11 +81,48 @@ export function VirtualizedTable<TData extends object>({
     setHeaderHeight(el.getBoundingClientRect().height);
   }, []);
 
+  const [rangeArray, setRangeArray] = useState<number[]>(
+    () => Array.from({ length: rows.length }, (_, i) => i)
+  );
+
+  useEffect(() => {
+    setRangeArray(Array.from({ length: rows.length }, (_, i) => i));
+  }, [rows.length]);
+
+  const [displayIndices, setDisplayIndices] = useState<number[]>([0]);
+
+  type DisplayRange = {
+    startIndex: number;
+    endIndex: number;
+  }
+
+  const [displayRange, setDisplayRange] = useState<DisplayRange>({
+    startIndex: 0,
+    endIndex: 0,
+  });
+
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => tableContainerRef.current,
     estimateSize: () => estimatedRowHeight,
     overscan,
+    rangeExtractor: (range: Range) => {
+      console.log('rangeExtractor called with', range);
+
+      // if (range.endIndex > displayRange.endIndex) {
+      //   const newDisplayIndices = Array.from(
+      //     { length: range.endIndex - displayRange.endIndex },
+      //     (_, i) => displayRange.endIndex + 1 + i
+      //   );
+      //   setDisplayIndices(displayIndices.concat(newDisplayIndices));
+      //   setDisplayRange({
+      //     startIndex: displayRange.startIndex,
+      //     endIndex: range.endIndex,
+      //   });
+      // }
+
+      return rangeArray;
+    },
     measureElement:
       typeof window !== "undefined" &&
       navigator.userAgent.indexOf("Firefox") === -1
