@@ -36,6 +36,7 @@ use nvme_resources::fault::AdminQueueFaultBehavior;
 use nvme_resources::fault::CommandMatch;
 use nvme_resources::fault::FaultConfiguration;
 use nvme_resources::fault::NamespaceChange;
+use nvme_spec::CompletionStatus;
 use pal_async::task::Spawn;
 use pal_async::task::Task;
 use pal_async::timer::PolledTimer;
@@ -106,7 +107,7 @@ pub struct AdminState {
     #[inspect(skip)]
     sq_delete_response: mesh::Receiver<u16>,
     #[inspect(iter_by_index)]
-    asynchronous_event_requests: Vec<u16>,
+    asynchronous_event_requests: Vec<spec::Command>,
     #[inspect(
         rename = "namespaces",
         with = "|x| inspect::iter_by_key(x.iter().map(|v| (v, ChangedNamespace { changed: true })))"
@@ -417,9 +418,8 @@ impl AdminHandler {
             poll_fn(|cx| state.admin_cq.poll_ready(cx)).await?;
 
             if !state.changed_namespaces.is_empty() && !state.notified_changed_namespaces {
-                if let Some(cid) = state.asynchronous_event_requests.pop() {
-                    state.admin_cq.write(
-                        spec::Completion {
+                if let Some(command) = state.asynchronous_event_requests.pop() {
+                    let completion = spec::Completion {
                             dw0: spec::AsynchronousEventRequestDw0::new()
                                 .with_event_type(spec::AsynchronousEventType::NOTICE.0)
                                 .with_log_page_identifier(spec::LogPageIdentifier::CHANGED_NAMESPACE_LIST.0)
@@ -428,10 +428,32 @@ impl AdminHandler {
                             dw1: 0,
                             sqhd: state.admin_sq.sqhd(),
                             sqid: 0,
-                            cid,
-                            status: spec::CompletionStatus::new(),
-                        },
-                    )?;
+                            cid: command.cdw0.cid(),
+                            status: CompletionStatus::new(),
+                        };
+
+                    let completion = self.apply_completion_fault(Some(command), completion).await;
+
+                    if completion.is_none() {
+                        continue;
+                    }
+
+                    state.admin_cq.write(completion.unwrap())?;
+
+                    // state.admin_cq.write(
+                    //     spec::Completion {
+                    //         dw0: spec::AsynchronousEventRequestDw0::new()
+                    //             .with_event_type(spec::AsynchronousEventType::NOTICE.0)
+                    //             .with_log_page_identifier(spec::LogPageIdentifier::CHANGED_NAMESPACE_LIST.0)
+                    //             .with_information(spec::AsynchronousEventInformationNotice::NAMESPACE_ATTRIBUTE_CHANGED.0)
+                    //             .into(),
+                    //         dw1: 0,
+                    //         sqhd: state.admin_sq.sqhd(),
+                    //         sqid: 0,
+                    //         cid,
+                    //         status: CompletionStatus::new(),
+                    //     },
+                    // )?;
 
                     state.notified_changed_namespaces = true;
 
@@ -638,9 +660,8 @@ impl AdminHandler {
             }
         };
 
-        let status = spec::CompletionStatus::new().with_status(result.status.0);
-
-        let mut completion = spec::Completion {
+        let status = CompletionStatus::new().with_status(result.status.0);
+        let completion = spec::Completion {
             dw0: result.dw[0],
             dw1: result.dw[1],
             sqid: 0,
@@ -649,6 +670,23 @@ impl AdminHandler {
             cid,
         };
 
+        let completion = self
+            .apply_completion_fault(command_processed, completion)
+            .await;
+
+        if completion.is_none() {
+            return Ok(());
+        }
+
+        state.admin_cq.write(completion.unwrap())?;
+        Ok(())
+    }
+
+    async fn apply_completion_fault(
+        &mut self,
+        command_processed: Option<spec::Command>,
+        mut completion: spec::Completion,
+    ) -> Option<spec::Completion> {
         // Apply a completion queue fault only to synchronously processed admin commands
         // (Ignore namespace change and sq delete complete events for now).
         if let Some(command) = command_processed
@@ -678,7 +716,7 @@ impl AdminHandler {
                         &command,
                         &completion
                     );
-                    return Ok(());
+                    return None;
                 }
                 AdminQueueFaultBehavior::Delay(duration) => {
                     self.timer.sleep(*duration).await;
@@ -711,8 +749,7 @@ impl AdminHandler {
             }
         }
 
-        state.admin_cq.write(completion)?;
-        Ok(())
+        return Some(completion);
     }
 
     fn handle_identify(
@@ -1084,7 +1121,7 @@ impl AdminHandler {
         if state.asynchronous_event_requests.len() >= MAX_ASYNC_EVENT_REQUESTS as usize {
             return Err(spec::Status::ASYNCHRONOUS_EVENT_REQUEST_LIMIT_EXCEEDED.into());
         }
-        state.asynchronous_event_requests.push(command.cdw0.cid());
+        state.asynchronous_event_requests.push(command.clone());
         Ok(None)
     }
 

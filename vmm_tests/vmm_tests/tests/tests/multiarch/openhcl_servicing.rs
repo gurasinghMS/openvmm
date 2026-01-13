@@ -491,6 +491,73 @@ async fn servicing_keepalive_with_nvme_identify_fault(
     Ok(())
 }
 
+/// AER's with a failed completion status will cause the AER handler in the
+/// driver to exit early. The idea of this test is to see if the driver can recover
+/// from this situation after servicing with keepalive enabled.
+#[openvmm_test(openhcl_linux_direct_x64 [LATEST_LINUX_DIRECT_TEST_X64])]
+async fn servicing_keepalive_with_failed_aer_completions(
+    config: PetriVmBuilder<OpenVmmPetriBackend>,
+    (igvm_file,): (ResolvedArtifact<impl petri_artifacts_common::tags::IsOpenhclIgvm>,),
+) -> Result<(), anyhow::Error> {
+    let flags = config.default_servicing_flags();
+    let mut fault_start_updater = CellUpdater::new(false);
+    let (ns_change_send, ns_change_recv) = mesh::channel::<NamespaceChange>();
+    let (aer_verify_send, aer_verify_recv) = mesh::oneshot::<()>();
+    let (log_verify_send, log_verify_recv) = mesh::oneshot::<()>();
+
+    let fault_configuration = FaultConfiguration::new(fault_start_updater.cell())
+        .with_namespace_fault(NamespaceFaultConfig::new(ns_change_recv))
+        .with_admin_queue_fault(
+            AdminQueueFaultConfig::new()
+                .with_submission_queue_fault(
+                    CommandMatchBuilder::new()
+                        .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
+                        .build(),
+                    AdminQueueFaultBehavior::Verify(Some(aer_verify_send)),
+                )
+                .with_submission_queue_fault(
+                    CommandMatchBuilder::new()
+                        .match_cdw0_opcode(nvme_spec::AdminOpcode::GET_LOG_PAGE.0)
+                        .build(),
+                    AdminQueueFaultBehavior::Verify(Some(log_verify_send)),
+                ),
+        );
+
+    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
+
+    agent.ping().await?;
+    let sh = agent.unix_shell();
+
+    // Make sure the disk showed up.
+    cmd!(sh, "ls /dev/sda").run().await?;
+
+    fault_start_updater.set(true).await;
+    vm.save_openhcl(igvm_file.clone(), flags).await?;
+    ns_change_send
+        .call(NamespaceChange::ChangeNotification, KEEPALIVE_VTL2_NSID)
+        .await?;
+    vm.restore_openhcl().await?;
+
+    CancelContext::new()
+        .with_timeout(Duration::from_secs(60))
+        .until_cancelled(aer_verify_recv)
+        .await
+        .expect("AER command was not observed within 60 seconds of vm restore after servicing with namespace change")
+        .expect("AER verification failed");
+
+    CancelContext::new()
+        .with_timeout(Duration::from_secs(60))
+        .until_cancelled(log_verify_recv)
+        .await
+        .expect("GET_LOG_PAGE command was not observed within 60 seconds of vm restore after servicing with namespace change")
+        .expect("GET_LOG_PAGE verification failed");
+
+    fault_start_updater.set(false).await;
+    agent.ping().await?;
+
+    Ok(())
+}
+
 async fn apply_fault_with_keepalive(
     config: PetriVmBuilder<OpenVmmPetriBackend>,
     fault_configuration: FaultConfiguration,

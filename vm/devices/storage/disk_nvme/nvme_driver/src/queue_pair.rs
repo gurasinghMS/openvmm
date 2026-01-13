@@ -553,9 +553,12 @@ impl Issuer {
     ) -> Result<spec::Completion, RequestError> {
         match self.send.call(Req::Command, command).await {
             Ok(completion) if completion.status.status() == 0 => Ok(completion),
-            Ok(completion) => Err(RequestError::Nvme(NvmeError(spec::Status(
-                completion.status.status(),
-            )))),
+            Ok(completion) => {
+                tracing::info!("NVMe command completed with error: {:?}", completion.status);
+                return Err(RequestError::Nvme(NvmeError(spec::Status(
+                    completion.status.status(),
+                ))));
+            }
             Err(err) => Err(RequestError::Gone(err)),
         }
     }
