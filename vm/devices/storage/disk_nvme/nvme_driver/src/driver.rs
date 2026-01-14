@@ -985,10 +985,13 @@ async fn handle_asynchronous_events(
 ) -> anyhow::Result<()> {
     tracing::info!("starting asynchronous event handler task");
     loop {
+        tracing::info!("Issuing asynchronous event request to controller");
         let dw0 = admin
             .issue_get_aen()
             .await
             .context("asynchronous event request failed")?;
+
+        tracing::info!("asynchronous event received: {:?}", dw0);
 
         match spec::AsynchronousEventType(dw0.event_type()) {
             spec::AsynchronousEventType::NOTICE => {
@@ -1009,6 +1012,8 @@ async fn handle_asynchronous_events(
                     )
                     .await
                     .context("failed to query changed namespace list")?;
+
+                tracing::info!("changed namespace list retrieved");
 
                 // Notify only the namespaces that have changed.
 
@@ -1032,6 +1037,10 @@ async fn handle_asynchronous_events(
                         }
                     }
                 }
+
+                tracing::info!(
+                    "asynchronous namespace change notification complete. All namespaces notified."
+                );
             }
             event_type => {
                 tracing::info!(

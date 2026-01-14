@@ -36,6 +36,7 @@ use nvme_resources::fault::AdminQueueFaultBehavior;
 use nvme_resources::fault::CommandMatch;
 use nvme_resources::fault::FaultConfiguration;
 use nvme_resources::fault::NamespaceChange;
+use nvme_spec::Completion;
 use nvme_spec::CompletionStatus;
 use pal_async::task::Spawn;
 use pal_async::task::Task;
@@ -709,7 +710,10 @@ impl AdminHandler {
                         &completion,
                         completion_updated
                     );
-                    return Some(completion_updated.clone());
+                    return Some(Completion {
+                        status: completion_updated.clone().status,
+                        ..completion
+                    });
                 }
                 AdminQueueFaultBehavior::Drop => {
                     tracing::info!(

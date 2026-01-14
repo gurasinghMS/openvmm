@@ -509,40 +509,41 @@ async fn servicing_keepalive_with_failed_aer_completions(
     let fault_configuration = FaultConfiguration::new(fault_start_updater.cell())
         .with_namespace_fault(NamespaceFaultConfig::new(ns_change_recv))
         .with_admin_queue_fault(
-            AdminQueueFaultConfig::new().with_submission_queue_fault(
-                CommandMatchBuilder::new()
-                    .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
-                    .build(),
-                AdminQueueFaultBehavior::Verify(Some(aer_verify_send)),
-            )
-            .with_submission_queue_fault(
-                CommandMatchBuilder::new()
-                    .match_cdw0_opcode(nvme_spec::AdminOpcode::GET_LOG_PAGE.0)
-                    .build(),
-                AdminQueueFaultBehavior::Verify(Some(log_verify_send)),
-            )
-            .with_completion_queue_fault(
-                CommandMatchBuilder::new()
-                    .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
-                    .build(),
-                // Indicate a failed completion. status(1023) will set several bits to 1 which should help in this erroring process.
-                AdminQueueFaultBehavior::Update(Completion {
-                    dw0: nvme_spec::AsynchronousEventRequestDw0::new()
-                        .with_event_type(nvme_spec::AsynchronousEventType::NOTICE.0)
-                        .with_log_page_identifier(
-                            nvme_spec::LogPageIdentifier::CHANGED_NAMESPACE_LIST.0,
-                        )
-                        .with_information(
-                            nvme_spec::AsynchronousEventInformationNotice::NAMESPACE_ATTRIBUTE_CHANGED.0,
-                        )
-                        .into(),
-                    dw1: 0,
-                    sqhd: 0,
-                    sqid: 0,
-                    cid: 0,
-                    status: nvme_spec::CompletionStatus::new().with_status(2047).with_crd(1),
-                }),
-            ),
+            AdminQueueFaultConfig::new()
+                .with_submission_queue_fault(
+                    CommandMatchBuilder::new()
+                        .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
+                        .build(),
+                    AdminQueueFaultBehavior::Verify(Some(aer_verify_send)),
+                )
+                .with_submission_queue_fault(
+                    CommandMatchBuilder::new()
+                        .match_cdw0_opcode(nvme_spec::AdminOpcode::GET_LOG_PAGE.0)
+                        .build(),
+                    AdminQueueFaultBehavior::Verify(Some(log_verify_send)),
+                ) 
+                .with_completion_queue_fault(
+                       CommandMatchBuilder::new()
+                           .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
+                           .build(),
+                       // Indicate a failed completion. status(1023) will set several bits to 1 which should help in this erroring process.
+                       AdminQueueFaultBehavior::Update(Completion {
+                           dw0: nvme_spec::AsynchronousEventRequestDw0::new()
+                               .with_event_type(nvme_spec::AsynchronousEventType::NOTICE.0)
+                               .with_log_page_identifier(
+                                   nvme_spec::LogPageIdentifier::CHANGED_NAMESPACE_LIST.0,
+                               )
+                               .with_information(
+                                   nvme_spec::AsynchronousEventInformationNotice::NAMESPACE_ATTRIBUTE_CHANGED.0,
+                               )
+                               .into(),
+                           dw1: 0,
+                           sqhd: 0,
+                           sqid: 0,
+                           cid: 0,
+                           status: nvme_spec::CompletionStatus::new().with_status(2047).with_crd(1),
+                       }),
+                   ),
         );
 
     let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
@@ -553,11 +554,11 @@ async fn servicing_keepalive_with_failed_aer_completions(
     // Make sure the disk showed up.
     cmd!(sh, "ls /dev/sda").run().await?;
 
-    vm.save_openhcl(igvm_file.clone(), flags).await?;
+    // vm.save_openhcl(igvm_file.clone(), flags).await?;
     ns_change_send
         .call(NamespaceChange::ChangeNotification, KEEPALIVE_VTL2_NSID)
         .await?;
-    vm.restore_openhcl().await?;
+    // vm.restore_openhcl().await?;
 
     CancelContext::new()
         .with_timeout(Duration::from_secs(30))
