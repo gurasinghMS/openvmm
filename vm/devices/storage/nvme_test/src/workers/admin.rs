@@ -419,7 +419,7 @@ impl AdminHandler {
 
             if !state.changed_namespaces.is_empty() && !state.notified_changed_namespaces {
                 if let Some(command) = state.asynchronous_event_requests.pop() {
-                    let completion = spec::Completion {
+                    let mut completion = spec::Completion {
                             dw0: spec::AsynchronousEventRequestDw0::new()
                                 .with_event_type(spec::AsynchronousEventType::NOTICE.0)
                                 .with_log_page_identifier(spec::LogPageIdentifier::CHANGED_NAMESPACE_LIST.0)
@@ -432,28 +432,25 @@ impl AdminHandler {
                             status: CompletionStatus::new(),
                         };
 
-                    let completion = self.apply_completion_fault(Some(command), completion).await;
+                    let updated_completion = self
+                        .apply_completion_fault(Some(command), completion.clone())
+                        .await;
 
-                    if completion.is_none() {
+                    if updated_completion.is_none() {
                         continue;
                     }
 
-                    state.admin_cq.write(completion.unwrap())?;
+                    completion = spec::Completion {
+                        status: updated_completion.unwrap().status,
+                        ..completion
+                    };
 
-                    // state.admin_cq.write(
-                    //     spec::Completion {
-                    //         dw0: spec::AsynchronousEventRequestDw0::new()
-                    //             .with_event_type(spec::AsynchronousEventType::NOTICE.0)
-                    //             .with_log_page_identifier(spec::LogPageIdentifier::CHANGED_NAMESPACE_LIST.0)
-                    //             .with_information(spec::AsynchronousEventInformationNotice::NAMESPACE_ATTRIBUTE_CHANGED.0)
-                    //             .into(),
-                    //         dw1: 0,
-                    //         sqhd: state.admin_sq.sqhd(),
-                    //         sqid: 0,
-                    //         cid,
-                    //         status: CompletionStatus::new(),
-                    //     },
-                    // )?;
+                    tracing::info!(
+                        "notifying guest of a completion with completion: {:?}",
+                        completion
+                    );
+
+                    state.admin_cq.write(completion)?;
 
                     state.notified_changed_namespaces = true;
 
@@ -572,6 +569,10 @@ impl AdminHandler {
                             );
                         }
                         AdminQueueFaultBehavior::Verify(send) => {
+                            tracing::info!(
+                                "configured fault: verifying admin command received in sq. command: {:?}",
+                                &command
+                            );
                             // Verify that the command was received.
                             if let Some(send) = send.take() {
                                 send.send(());
@@ -685,7 +686,7 @@ impl AdminHandler {
     async fn apply_completion_fault(
         &mut self,
         command_processed: Option<spec::Command>,
-        mut completion: spec::Completion,
+        completion: spec::Completion,
     ) -> Option<spec::Completion> {
         // Apply a completion queue fault only to synchronously processed admin commands
         // (Ignore namespace change and sq delete complete events for now).
@@ -708,7 +709,7 @@ impl AdminHandler {
                         &completion,
                         completion_updated
                     );
-                    completion = completion_updated.clone();
+                    return Some(completion_updated.clone());
                 }
                 AdminQueueFaultBehavior::Drop => {
                     tracing::info!(
@@ -741,6 +742,11 @@ impl AdminHandler {
                         .expect("configured fault failure: failed to write custom payload");
                 }
                 AdminQueueFaultBehavior::Verify(send) => {
+                    tracing::info!(
+                        "configured fault: verifying admin completion written to cq. command: {:?}, completion: {:?}",
+                        &command,
+                        &completion
+                    );
                     // Verify that the command was received.
                     if let Some(send) = send.take() {
                         send.send(());

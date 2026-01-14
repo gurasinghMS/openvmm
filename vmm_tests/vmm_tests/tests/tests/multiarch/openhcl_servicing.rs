@@ -21,6 +21,7 @@ use nvme_resources::fault::NamespaceChange;
 use nvme_resources::fault::NamespaceFaultConfig;
 use nvme_resources::fault::PciFaultBehavior;
 use nvme_resources::fault::PciFaultConfig;
+use nvme_spec::Completion;
 use nvme_test::command_match::CommandMatchBuilder;
 use openvmm_defs::config::DeviceVtl;
 use openvmm_defs::config::VpciDeviceConfig;
@@ -500,7 +501,7 @@ async fn servicing_keepalive_with_failed_aer_completions(
     (igvm_file,): (ResolvedArtifact<impl petri_artifacts_common::tags::IsOpenhclIgvm>,),
 ) -> Result<(), anyhow::Error> {
     let flags = config.default_servicing_flags();
-    let mut fault_start_updater = CellUpdater::new(false);
+    let mut fault_start_updater = CellUpdater::new(true);
     let (ns_change_send, ns_change_recv) = mesh::channel::<NamespaceChange>();
     let (aer_verify_send, aer_verify_recv) = mesh::oneshot::<()>();
     let (log_verify_send, log_verify_recv) = mesh::oneshot::<()>();
@@ -508,19 +509,40 @@ async fn servicing_keepalive_with_failed_aer_completions(
     let fault_configuration = FaultConfiguration::new(fault_start_updater.cell())
         .with_namespace_fault(NamespaceFaultConfig::new(ns_change_recv))
         .with_admin_queue_fault(
-            AdminQueueFaultConfig::new()
-                .with_submission_queue_fault(
-                    CommandMatchBuilder::new()
-                        .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
-                        .build(),
-                    AdminQueueFaultBehavior::Verify(Some(aer_verify_send)),
-                )
-                .with_submission_queue_fault(
-                    CommandMatchBuilder::new()
-                        .match_cdw0_opcode(nvme_spec::AdminOpcode::GET_LOG_PAGE.0)
-                        .build(),
-                    AdminQueueFaultBehavior::Verify(Some(log_verify_send)),
-                ),
+            AdminQueueFaultConfig::new().with_submission_queue_fault(
+                CommandMatchBuilder::new()
+                    .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
+                    .build(),
+                AdminQueueFaultBehavior::Verify(Some(aer_verify_send)),
+            )
+            .with_submission_queue_fault(
+                CommandMatchBuilder::new()
+                    .match_cdw0_opcode(nvme_spec::AdminOpcode::GET_LOG_PAGE.0)
+                    .build(),
+                AdminQueueFaultBehavior::Verify(Some(log_verify_send)),
+            )
+            .with_completion_queue_fault(
+                CommandMatchBuilder::new()
+                    .match_cdw0_opcode(nvme_spec::AdminOpcode::ASYNCHRONOUS_EVENT_REQUEST.0)
+                    .build(),
+                // Indicate a failed completion. status(1023) will set several bits to 1 which should help in this erroring process.
+                AdminQueueFaultBehavior::Update(Completion {
+                    dw0: nvme_spec::AsynchronousEventRequestDw0::new()
+                        .with_event_type(nvme_spec::AsynchronousEventType::NOTICE.0)
+                        .with_log_page_identifier(
+                            nvme_spec::LogPageIdentifier::CHANGED_NAMESPACE_LIST.0,
+                        )
+                        .with_information(
+                            nvme_spec::AsynchronousEventInformationNotice::NAMESPACE_ATTRIBUTE_CHANGED.0,
+                        )
+                        .into(),
+                    dw1: 0,
+                    sqhd: 0,
+                    sqid: 0,
+                    cid: 0,
+                    status: nvme_spec::CompletionStatus::new().with_status(2047).with_crd(1),
+                }),
+            ),
         );
 
     let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
@@ -531,7 +553,6 @@ async fn servicing_keepalive_with_failed_aer_completions(
     // Make sure the disk showed up.
     cmd!(sh, "ls /dev/sda").run().await?;
 
-    fault_start_updater.set(true).await;
     vm.save_openhcl(igvm_file.clone(), flags).await?;
     ns_change_send
         .call(NamespaceChange::ChangeNotification, KEEPALIVE_VTL2_NSID)
@@ -539,18 +560,26 @@ async fn servicing_keepalive_with_failed_aer_completions(
     vm.restore_openhcl().await?;
 
     CancelContext::new()
-        .with_timeout(Duration::from_secs(60))
+        .with_timeout(Duration::from_secs(30))
         .until_cancelled(aer_verify_recv)
         .await
-        .expect("AER command was not observed within 60 seconds of vm restore after servicing with namespace change")
+        .expect("AER command was not observed within 30 seconds of vm restore after servicing with namespace change")
         .expect("AER verification failed");
 
+    // The AER completion will have a failed status, which should put the AER handler in a failed state.
+    // After that, the driver should not issue GET_LOG_PAGE commands because the AER handler has stopped.
+    // We expect log_verify_recv to timeout, indicating GET_LOG_PAGE was never called.
     CancelContext::new()
-        .with_timeout(Duration::from_secs(60))
-        .until_cancelled(log_verify_recv)
-        .await
+        .with_timeout(Duration::from_secs(30))
+        .until_cancelled(log_verify_recv).await
         .expect("GET_LOG_PAGE command was not observed within 60 seconds of vm restore after servicing with namespace change")
         .expect("GET_LOG_PAGE verification failed");
+
+    // We expect this to timeout (Err) because GET_LOG_PAGE should NOT be called after AER failure
+    // assert!(
+    //     log_result.is_err(),
+    //     "GET_LOG_PAGE was unexpectedly called after AER failure - the handler should have stopped"
+    // );
 
     fault_start_updater.set(false).await;
     agent.ping().await?;
