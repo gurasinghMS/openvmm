@@ -29,6 +29,8 @@ export interface VirtualizedTableProps<TData extends object> {
   getRowClassName?: (row: Row<TData>) => string;
   /** Handle row click events */
   onRowClick?: (row: Row<TData>, event: React.MouseEvent) => void;
+  /** Handle row double-click events */
+  onRowDoubleClick?: (row: Row<TData>, event: React.MouseEvent) => void;
   /** If provided, the virtualizer will scroll this row index into view (center aligned). */
   scrollToIndex?: number | null;
 }
@@ -51,6 +53,7 @@ export function VirtualizedTable<TData extends object>({
   overscan = 20,
   getRowClassName,
   onRowClick,
+  onRowDoubleClick,
   scrollToIndex,
 }: VirtualizedTableProps<TData>): React.JSX.Element {
   const table = useReactTable({
@@ -196,6 +199,9 @@ export function VirtualizedTable<TData extends object>({
                   }}
                   onClick={
                     onRowClick ? (event) => onRowClick(row, event) : undefined
+                  }
+                  onDoubleClick={
+                    onRowDoubleClick ? (event) => onRowDoubleClick(row, event) : undefined
                   }
                 >
                   {row.getVisibleCells().map((cell) => {
