@@ -33,6 +33,10 @@ interface LogViewerHeaderProps {
   pinnedCount: number;
   /** Callback to unpin all rows */
   onUnpinAll: () => void;
+  /** Callback to pin all rows in current view */
+  onPinAll: () => void;
+  /** Callback to scroll to the top of the log */
+  onScrollToTop: () => void;
 }
 
 function LogViewerHeader({
@@ -46,6 +50,8 @@ function LogViewerHeader({
   searchActive = true,
   pinnedCount,
   onUnpinAll,
+  onPinAll,
+  onScrollToTop,
 }: LogViewerHeaderProps): React.JSX.Element {
   const encodedArchitecture = encodeURIComponent(architecture);
   const encodedRemainder = encodeURIComponent(testNameRemainder);
@@ -81,6 +87,28 @@ function LogViewerHeader({
       </div>
       <div className="runs-header-right-section">
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button
+            className="logviewer-unpin-all-btn"
+            onClick={onScrollToTop}
+            title="Scroll to top"
+            aria-label="Scroll to top"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              {/* Up arrow with stem */}
+              <path d="M13,20H11V8L5.5,13.5L4.08,12.08L12,4.16L19.92,12.08L18.5,13.5L13,8V20Z" />
+            </svg>
+          </button>
+          <button
+            className="logviewer-unpin-all-btn"
+            onClick={onPinAll}
+            title="Pin all rows in current view"
+            aria-label="Pin all rows in current view"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              {/* Pin icon */}
+              <path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z" />
+            </svg>
+          </button>
           <button
             className="logviewer-unpin-all-btn"
             onClick={onUnpinAll}
@@ -275,6 +303,16 @@ export function LogViewer(): React.JSX.Element {
           searchActive={inspectOverlay == null}
           pinnedCount={pinnedIndices.size}
           onUnpinAll={() => setPinnedIndices(new Set())}
+          onPinAll={() => {
+            setPinnedIndices((prev) => {
+              const next = new Set(prev);
+              for (const log of filteredLogs) {
+                next.add(log.index);
+              }
+              return next;
+            });
+          }}
+          onScrollToTop={() => setPendingScrollIndex(0)}
         />
       </div>
 
