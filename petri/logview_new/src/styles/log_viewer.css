@@ -68,3 +68,29 @@
   box-shadow: 0 0 12px rgba(0, 0, 0, 0.8);
   border-radius: 6px;
 }
+
+/* Unpin-all button in header */
+.logviewer-unpin-all-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: #666;
+  border-radius: 4px;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+  flex-shrink: 0;
+}
+
+.logviewer-unpin-all-btn:hover {
+  color: #333;
+  background-color: rgba(0, 0, 0, 0.08);
+}
+
+.logviewer-unpin-all-btn:active {
+  background-color: rgba(0, 0, 0, 0.12);
+}

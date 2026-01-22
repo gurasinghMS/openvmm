@@ -29,6 +29,10 @@ interface LogViewerHeaderProps {
   searchInputRef?: React.RefObject<HTMLInputElement | null>;
   /** Whether the search input should have its global key handlers active */
   searchActive?: boolean;
+  /** Number of currently pinned rows */
+  pinnedCount: number;
+  /** Callback to unpin all rows */
+  onUnpinAll: () => void;
 }
 
 function LogViewerHeader({
@@ -40,6 +44,8 @@ function LogViewerHeader({
   setSearchFilter,
   searchInputRef,
   searchActive = true,
+  pinnedCount,
+  onUnpinAll,
 }: LogViewerHeaderProps): React.JSX.Element {
   const encodedArchitecture = encodeURIComponent(architecture);
   const encodedRemainder = encodeURIComponent(testNameRemainder);
@@ -74,12 +80,34 @@ function LogViewerHeader({
         </div>
       </div>
       <div className="runs-header-right-section">
-        <SearchInput
-          value={searchFilter}
-          onChange={setSearchFilter}
-          inputRef={searchInputRef}
-          active={searchActive}
-        />
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button
+            className="logviewer-unpin-all-btn"
+            onClick={onUnpinAll}
+            title="Unpin all rows"
+            aria-label="Unpin all rows"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              {/* Pin icon */}
+              <path d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z" />
+              {/* Diagonal strikethrough line */}
+              <line
+                x1="3"
+                y1="21"
+                x2="21"
+                y2="3"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              />
+            </svg>
+          </button>
+          <SearchInput
+            value={searchFilter}
+            onChange={setSearchFilter}
+            inputRef={searchInputRef}
+            active={searchActive}
+          />
+        </div>
       </div>
     </>
   );
@@ -245,6 +273,8 @@ export function LogViewer(): React.JSX.Element {
           setSearchFilter={setSearchFilter}
           searchInputRef={searchInputRef}
           searchActive={inspectOverlay == null}
+          pinnedCount={pinnedIndices.size}
+          onUnpinAll={() => setPinnedIndices(new Set())}
         />
       </div>
 
