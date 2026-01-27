@@ -247,23 +247,6 @@ impl<T: 'static + MeshField + Send + Sync + Clone> Cell<T> {
         })
         .await
     }
-
-    /// Waits for a new value to be set.
-    pub async fn wait_next_with_cx(&mut self, cx: &mut Context<'_>) {
-        poll_fn(|cx| {
-            let mut old_waker = None;
-            let inner = &mut *self.0;
-            inner.port.with_handler(|state| {
-                if inner.last_id == state.id {
-                    old_waker = state.waker.replace(cx.waker().clone());
-                    return Poll::Pending;
-                }
-                inner.last_id = state.id;
-                Poll::Ready(())
-            })
-        })
-        .await
-    }
 }
 
 #[derive(Protobuf)]
