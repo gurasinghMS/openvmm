@@ -24,11 +24,14 @@ use anyhow::Context as _;
 use futures::StreamExt;
 use futures::future::join_all;
 use inspect::Inspect;
+use mesh::Cell;
+use mesh::CellUpdater;
 use mesh::payload::Protobuf;
 use mesh::rpc::Rpc;
 use mesh::rpc::RpcSend;
 use pal_async::task::Spawn;
 use pal_async::task::Task;
+use pal_async::timer::PolledTimer;
 use parking_lot::RwLock;
 use save_restore::NvmeDriverWorkerSavedState;
 use std::collections::HashMap;
@@ -82,6 +85,8 @@ pub struct NvmeDriver<D: DeviceBacking> {
     /// Keeps the controller connected (CC.EN==1) while servicing.
     nvme_keepalive: bool,
     bounce_buffer: bool,
+    #[inspect(with = "|x| x.get()")]
+    attempting_save: Cell<bool>,
 }
 
 /// A container that can hold either a weak or strong reference to a value.
@@ -142,6 +147,8 @@ struct DriverWorkerTask<D: DeviceBacking> {
     #[inspect(skip)]
     recv: mesh::Receiver<NvmeWorkerRequest>,
     bounce_buffer: bool,
+    #[inspect(with = "|x| x.get()")]
+    save_updater: CellUpdater<bool>,
 }
 
 #[derive(Inspect)]
@@ -205,6 +212,7 @@ impl<D: DeviceBacking> IoQueue<D> {
         mem_block: MemoryBlock,
         saved_state: &IoQueueSavedState,
         bounce_buffer: bool,
+        attempting_save: Cell<bool>,
     ) -> anyhow::Result<Self> {
         let IoQueueSavedState {
             cpu,
@@ -219,6 +227,7 @@ impl<D: DeviceBacking> IoQueue<D> {
             queue_data,
             bounce_buffer,
             NoOpAerHandler,
+            attempting_save,
         )?;
 
         Ok(Self {
@@ -325,6 +334,9 @@ impl<D: DeviceBacking> NvmeDriver<D> {
             send,
         });
 
+        let mut save_updater = CellUpdater::new(false);
+        let attempting_save = save_updater.cell();
+
         Ok(Self {
             device_id: device.id().to_owned(),
             task: Some(TaskControl::new(DriverWorkerTask {
@@ -338,6 +350,7 @@ impl<D: DeviceBacking> NvmeDriver<D> {
                 io_issuers: io_issuers.clone(),
                 recv,
                 bounce_buffer,
+                save_updater,
             })),
             admin: None,
             identify: None,
@@ -347,6 +360,7 @@ impl<D: DeviceBacking> NvmeDriver<D> {
             namespaces: Default::default(),
             nvme_keepalive: false,
             bounce_buffer,
+            attempting_save,
         })
     }
 
@@ -381,6 +395,7 @@ impl<D: DeviceBacking> NvmeDriver<D> {
             worker.registers.clone(),
             self.bounce_buffer,
             AdminAerHandler::new(),
+            self.attempting_save.clone(),
         )
         .context("failed to create admin queue pair")?;
 
@@ -765,6 +780,9 @@ impl<D: DeviceBacking> NvmeDriver<D> {
             send,
         });
 
+        let mut save_updater = CellUpdater::new(false);
+        let attempting_save = save_updater.cell();
+
         let mut this = Self {
             device_id: device.id().to_owned(),
             task: Some(TaskControl::new(DriverWorkerTask {
@@ -778,6 +796,7 @@ impl<D: DeviceBacking> NvmeDriver<D> {
                 io_issuers: io_issuers.clone(),
                 recv,
                 bounce_buffer,
+                save_updater,
             })),
             admin: None, // Updated below.
             identify: Some(Arc::new(
@@ -790,6 +809,7 @@ impl<D: DeviceBacking> NvmeDriver<D> {
             namespaces: Default::default(),
             nvme_keepalive: true,
             bounce_buffer,
+            attempting_save: attempting_save.clone(),
         };
 
         let task = &mut this.task.as_mut().unwrap();
@@ -832,6 +852,7 @@ impl<D: DeviceBacking> NvmeDriver<D> {
                     a,
                     bounce_buffer,
                     AdminAerHandler::new(),
+                    attempting_save.clone(),
                 )
                 .expect("failed to restore admin queue pair")
             })
@@ -918,6 +939,7 @@ impl<D: DeviceBacking> NvmeDriver<D> {
                     mem_block,
                     q,
                     bounce_buffer,
+                    attempting_save.clone(),
                 )?;
                 tracing::info!(qid, cpu, ?pci_id, "restoring queue: create issuer");
                 let issuer = IoIssuer {
@@ -1179,6 +1201,7 @@ impl<D: DeviceBacking> DriverWorkerTask<D> {
             proto.mem,
             &proto.save_state,
             self.bounce_buffer,
+            self.save_updater.cell(),
         )
         .with_context(|| format!("failed to restore io queue for {}, cpu {}", pci_id, cpu))?;
 
@@ -1309,6 +1332,7 @@ impl<D: DeviceBacking> DriverWorkerTask<D> {
             self.registers.clone(),
             self.bounce_buffer,
             NoOpAerHandler,
+            self.save_updater.cell(),
         )
         .map_err(|err| DeviceError::IoQueuePairCreationFailure(err, qid))?;
 
@@ -1397,6 +1421,8 @@ impl<D: DeviceBacking> DriverWorkerTask<D> {
         &mut self,
         worker_state: &mut WorkerState,
     ) -> anyhow::Result<NvmeDriverWorkerSavedState> {
+        self.save_updater.set(true).await;
+
         let admin = match self.admin.as_ref() {
             Some(a) => Some(a.save().await?),
             None => None,

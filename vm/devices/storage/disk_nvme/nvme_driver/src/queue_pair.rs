@@ -20,6 +20,7 @@ use guestmem::GuestMemoryError;
 use guestmem::ranges::PagedRange;
 use inspect::Inspect;
 use inspect_counters::Counter;
+use mesh::Cell;
 use mesh::rpc::Rpc;
 use mesh::rpc::RpcError;
 use mesh::rpc::RpcSend;
@@ -226,6 +227,7 @@ impl<A: AerHandler, D: DeviceBacking> QueuePair<A, D> {
         registers: Arc<DeviceRegisters<D>>,
         bounce_buffer: bool,
         aer_handler: A,
+        attempting_save: Cell<bool>,
     ) -> anyhow::Result<Self> {
         // FUTURE: Consider splitting this into several allocations, rather than
         // allocating the sum total together. This can increase the likelihood
@@ -259,6 +261,7 @@ impl<A: AerHandler, D: DeviceBacking> QueuePair<A, D> {
             None,
             bounce_buffer,
             aer_handler,
+            attempting_save,
         )
     }
 
@@ -273,6 +276,7 @@ impl<A: AerHandler, D: DeviceBacking> QueuePair<A, D> {
         saved_state: Option<&QueueHandlerSavedState>,
         bounce_buffer: bool,
         aer_handler: A,
+        attempting_save: Cell<bool>,
     ) -> anyhow::Result<Self> {
         // MemoryBlock is either allocated or restored prior calling here.
         let sq_mem_block = mem.subblock(0, SQ_SIZE);
@@ -323,7 +327,9 @@ impl<A: AerHandler, D: DeviceBacking> QueuePair<A, D> {
         let cq_addr = cq_mem_block.pfns()[0] * PAGE_SIZE64;
 
         let queue_handler = match saved_state {
-            Some(s) => QueueHandler::restore(sq_mem_block, cq_mem_block, s, aer_handler)?,
+            Some(s) => {
+                QueueHandler::restore(sq_mem_block, cq_mem_block, s, aer_handler, attempting_save)?
+            }
             None => {
                 // Create a new one.
                 QueueHandler {
@@ -333,6 +339,7 @@ impl<A: AerHandler, D: DeviceBacking> QueuePair<A, D> {
                     stats: Default::default(),
                     drain_after_restore: false,
                     aer_handler,
+                    attempting_save,
                 }
             }
         };
@@ -440,6 +447,7 @@ impl<A: AerHandler, D: DeviceBacking> QueuePair<A, D> {
         saved_state: &QueuePairSavedState,
         bounce_buffer: bool,
         aer_handler: A,
+        attempting_save: Cell<bool>,
     ) -> anyhow::Result<Self> {
         let QueuePairSavedState {
             mem_len: _,  // Used to restore DMA buffer before calling this.
@@ -461,6 +469,7 @@ impl<A: AerHandler, D: DeviceBacking> QueuePair<A, D> {
             Some(handler_data),
             bounce_buffer,
             aer_handler,
+            attempting_save,
         )
     }
 }
@@ -906,6 +915,8 @@ struct QueueHandler<A: AerHandler> {
     drain_after_restore: bool,
     #[inspect(skip)]
     aer_handler: A,
+    #[inspect(with = "|x| x.get()")]
+    attempting_save: Cell<bool>,
 }
 
 #[derive(Inspect, Default)]
@@ -931,6 +942,9 @@ impl<A: AerHandler> QueueHandler<A> {
             let event = if !self.drain_after_restore {
                 // Normal processing of the requests and completions.
                 poll_fn(|cx| {
+                    if self.sq.id() == 1 {
+                        tracing::info!("Looking for space in sq1");
+                    }
                     if !self.sq.is_full() && !self.commands.is_full() {
                         // Prioritize sending AERs to keep the cycle going
                         if self.aer_handler.poll_send_aer() {
@@ -944,10 +958,18 @@ impl<A: AerHandler> QueueHandler<A> {
                         if let Some(completion) = self.cq.read() {
                             return Event::Completion(completion).into();
                         }
+                        if self.attempting_save.get() {
+                            // If save is being attempted, do not block processing
+                            // on interrupts.
+                            break;
+                        }
                         if interrupt.poll(cx).is_pending() {
                             break;
                         }
                         self.stats.interrupts.increment();
+                    }
+                    if (self.sq.id() == 1) {
+                        tracing::info!("Committing SQ/CQ heads and returning pending until woken");
                     }
                     self.sq.commit(registers);
                     self.cq.commit(registers);
@@ -1030,6 +1052,7 @@ impl<A: AerHandler> QueueHandler<A> {
         cq_mem_block: MemoryBlock,
         saved_state: &QueueHandlerSavedState,
         mut aer_handler: A,
+        attempting_save: Cell<bool>,
     ) -> anyhow::Result<Self> {
         let QueueHandlerSavedState {
             sq_state,
@@ -1049,6 +1072,7 @@ impl<A: AerHandler> QueueHandler<A> {
             // Admin queue is expected to have pending Async Event requests.
             drain_after_restore: sq_state.sqid != 0 && !pending_cmds.commands.is_empty(),
             aer_handler,
+            attempting_save,
         })
     }
 }

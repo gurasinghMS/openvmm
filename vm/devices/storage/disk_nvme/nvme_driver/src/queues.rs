@@ -54,6 +54,9 @@ impl SubmissionQueue {
     }
 
     pub fn is_full(&self) -> bool {
+        if self.sqid == 1 {
+            return true;
+        }
         advance(self.tail, self.len) == self.head
     }
 
