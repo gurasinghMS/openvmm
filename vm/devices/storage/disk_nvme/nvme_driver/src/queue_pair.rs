@@ -958,6 +958,11 @@ impl<A: AerHandler> QueueHandler<A> {
                         if let Some(completion) = self.cq.read() {
                             return Event::Completion(completion).into();
                         }
+                        if self.attempting_save.get() {
+                            // If save is being attempted, do not block processing
+                            // on interrupts.
+                            break;
+                        }
                         if interrupt.poll(cx).is_pending() {
                             break;
                         }
