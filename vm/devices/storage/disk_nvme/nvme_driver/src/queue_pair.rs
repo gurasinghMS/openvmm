@@ -931,6 +931,9 @@ impl<A: AerHandler> QueueHandler<A> {
             let event = if !self.drain_after_restore {
                 // Normal processing of the requests and completions.
                 poll_fn(|cx| {
+                    if self.sq.id() == 1 {
+                        tracing::info!("Looking for space in sq1");
+                    }
                     if !self.sq.is_full() && !self.commands.is_full() {
                         // Prioritize sending AERs to keep the cycle going
                         if self.aer_handler.poll_send_aer() {
