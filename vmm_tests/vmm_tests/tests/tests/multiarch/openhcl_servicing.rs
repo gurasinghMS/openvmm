@@ -380,7 +380,7 @@ async fn servicing_keepalive_with_io(
     let fault_configuration = FaultConfiguration::new(cell.clone()).with_io_queue_fault(
         IoQueueFaultConfig::new(cell.clone()).with_completion_queue_fault(
             CommandMatchBuilder::new().match_cdw0_opcode(0x2).build(),
-            IoQueueFaultBehavior::Delay(Duration::from_millis(10)),
+            IoQueueFaultBehavior::Delay(Duration::from_millis(1000)),
         ),
     );
 
@@ -409,6 +409,9 @@ async fn servicing_keepalive_with_io(
     //     .run()
     //     .await?;
 
+    fault_start_updater.set(true).await;
+    thread::sleep(Duration::from_secs(5));
+
     let mut io_cmd = agent.command("sh");
     io_cmd
         .args(["-c", "while :; do cat /dev/sda > /dev/null; done"])
@@ -421,8 +424,6 @@ async fn servicing_keepalive_with_io(
 
     for _ in 0..1 {
         vm.restart_openhcl(igvm_file.clone(), flags).await?;
-        thread::sleep(Duration::from_secs(5));
-        fault_start_updater.set(true).await;
         thread::sleep(Duration::from_secs(5));
     }
 

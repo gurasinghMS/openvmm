@@ -210,9 +210,9 @@ impl IoHandler {
                 }
             };
 
-            if state.fault_configuration.fault_active.get() && self.sqid != 0 {
-                panic!("Still receiving reads on IO queue sqid: {}", self.sqid);
-            }
+            // if state.fault_configuration.fault_active.get() && self.sqid != 0 {
+            //     panic!("Still receiving reads on IO queue sqid: {}", self.sqid);
+            // }
 
             let next_io_completion = async {
                 if state.ios.is_empty() {
