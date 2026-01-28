@@ -17,6 +17,8 @@ use nvme_resources::NvmeFaultControllerHandle;
 use nvme_resources::fault::AdminQueueFaultBehavior;
 use nvme_resources::fault::AdminQueueFaultConfig;
 use nvme_resources::fault::FaultConfiguration;
+use nvme_resources::fault::IoQueueFaultBehavior;
+use nvme_resources::fault::IoQueueFaultConfig;
 use nvme_resources::fault::NamespaceChange;
 use nvme_resources::fault::NamespaceFaultConfig;
 use nvme_resources::fault::PciFaultBehavior;
@@ -24,6 +26,7 @@ use nvme_resources::fault::PciFaultConfig;
 use nvme_test::command_match::CommandMatchBuilder;
 use openvmm_defs::config::DeviceVtl;
 use openvmm_defs::config::VpciDeviceConfig;
+use pal_async::timer::PolledTimer;
 use petri::OpenHclServicingFlags;
 use petri::PetriGuestStateLifetime;
 use petri::PetriVm;
@@ -47,7 +50,9 @@ use petri_artifacts_vmm_test::artifacts::openhcl_igvm::LATEST_STANDARD_AARCH64;
 #[allow(unused_imports)]
 use petri_artifacts_vmm_test::artifacts::openhcl_igvm::LATEST_STANDARD_X64;
 use pipette_client::PipetteClient;
+use pipette_client::process::Stdio;
 use scsidisk_resources::SimpleScsiDiskHandle;
+use std::thread;
 use std::time::Duration;
 use storvsp_resources::ScsiControllerHandle;
 use storvsp_resources::ScsiDeviceAndPath;
@@ -354,6 +359,72 @@ async fn servicing_keepalive_with_namespace_update(
         .await
         .expect("GET_LOG_PAGE command was not observed within 60 seconds of vm restore after servicing with namespace change")
         .expect("GET_LOG_PAGE verification failed");
+
+    fault_start_updater.set(false).await;
+    agent.ping().await?;
+
+    Ok(())
+}
+
+/// Verifies behavior when a GET_LOG_PAGE command is delayed during servicing, simulating a
+/// scenario where an AER could be missed after OpenHCL restart.
+#[openvmm_test(openhcl_linux_direct_x64 [LATEST_LINUX_DIRECT_TEST_X64])]
+async fn servicing_keepalive_with_io(
+    config: PetriVmBuilder<OpenVmmPetriBackend>,
+    (igvm_file,): (ResolvedArtifact<impl petri_artifacts_common::tags::IsOpenhclIgvm>,),
+) -> Result<(), anyhow::Error> {
+    let flags = config.default_servicing_flags();
+    let mut fault_start_updater = CellUpdater::new(false);
+    let cell = fault_start_updater.cell();
+
+    let fault_configuration = FaultConfiguration::new(cell.clone()).with_io_queue_fault(
+        IoQueueFaultConfig::new(cell.clone()).with_completion_queue_fault(
+            CommandMatchBuilder::new().match_cdw0_opcode(0x2).build(),
+            IoQueueFaultBehavior::Delay(Duration::from_millis(10)),
+        ),
+    );
+
+    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
+
+    agent.ping().await?;
+    let sh = agent.unix_shell();
+
+    // Make sure the disk showed up.
+    // TODO: At this
+    cmd!(sh, "ls /dev/sda").run().await?;
+    cmd!(sh, "ls /dev/sdb").run().await?;
+    cmd!(sh, "ls /dev/null").run().await?;
+
+    // Add a sleep to let the system stablize. When the guest boots it tries to
+    // read from the disk. We don't want that messing up our experiment.
+    thread::sleep(Duration::from_secs(5));
+
+    // Now start the experiment. nvme_emulator will panic when IO queues are
+    // being read from.
+    fault_start_updater.set(true).await;
+
+    // This should ideally spawn a background task and then return. The guest
+    // should ALWAYS be reading from the disk during the servicing operation.
+    // cmd!(sh, "sh -c '(while :; do cat /dev/sda > /dev/null; done) &'")
+    //     .run()
+    //     .await?;
+
+    let mut io_cmd = agent.command("sh");
+    io_cmd
+        .args(["-c", "while :; do cat /dev/sda > /dev/null; done"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let _io_child = io_cmd.spawn().await?;
+
+    thread::sleep(Duration::from_secs(5));
+
+    for _ in 0..1 {
+        vm.restart_openhcl(igvm_file.clone(), flags).await?;
+        thread::sleep(Duration::from_secs(5));
+        fault_start_updater.set(true).await;
+        thread::sleep(Duration::from_secs(5));
+    }
 
     fault_start_updater.set(false).await;
     agent.ping().await?;

@@ -929,6 +929,9 @@ impl<A: AerHandler> QueueHandler<A> {
             }
 
             let event = if !self.drain_after_restore {
+                if self.sq.id() != 0 && self.sq.is_full() {
+                    panic!("submission queue is full with sqid: {}", self.sq.id());
+                }
                 // Normal processing of the requests and completions.
                 poll_fn(|cx| {
                     if !self.sq.is_full() && !self.commands.is_full() {

@@ -43,6 +43,8 @@ pub enum IoQueueFaultBehavior {
     CustomPayload(Vec<u8>),
     /// Panic
     Panic(String),
+    /// Adds a delay
+    Delay(Duration),
 }
 
 /// Supported fault behaviour for PCI faults

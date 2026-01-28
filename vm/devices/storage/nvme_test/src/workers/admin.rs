@@ -235,6 +235,7 @@ impl AdminState {
                         handler.config.mem.clone(),
                         i as u16 + 1,
                         self.sq_delete_response.sender(),
+                        handler.driver.clone(),
                     )),
                     pending_delete_cid: None,
                     cqid: None,

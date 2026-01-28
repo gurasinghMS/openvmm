@@ -29,6 +29,7 @@ use mesh::rpc::Rpc;
 use mesh::rpc::RpcSend;
 use pal_async::task::Spawn;
 use pal_async::task::Task;
+use pal_async::timer::PolledTimer;
 use parking_lot::RwLock;
 use save_restore::NvmeDriverWorkerSavedState;
 use std::collections::HashMap;
@@ -1294,7 +1295,7 @@ impl<D: DeviceBacking> DriverWorkerTask<D> {
 
         tracing::debug!(cpu, qid, iv, pci_id = ?self.device.id(), "creating io queue");
 
-        let interrupt = self
+        let interrupt: DeviceInterrupt = self
             .device
             .map_interrupt(iv.into(), cpu)
             .map_err(DeviceError::InterruptMapFailure)?;

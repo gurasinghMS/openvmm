@@ -22,6 +22,7 @@ use nvme_resources::fault::CommandMatch;
 use nvme_resources::fault::IoQueueFaultBehavior;
 use nvme_resources::fault::IoQueueFaultConfig;
 use nvme_spec::Command;
+use pal_async::timer::PolledTimer;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -36,6 +37,7 @@ use task_control::StopTask;
 use thiserror::Error;
 use unicycle::FuturesUnordered;
 use vmcore::interrupt::Interrupt;
+use vmcore::vm_task::VmTaskDriver;
 use zerocopy::FromZeros;
 
 #[derive(Inspect)]
@@ -44,6 +46,8 @@ pub struct IoHandler {
     sqid: u16,
     #[inspect(skip)]
     admin_response: mesh::Sender<u16>,
+    #[inspect(skip)]
+    timer: PolledTimer,
 }
 
 #[derive(Inspect)]
@@ -150,11 +154,17 @@ enum HandlerError {
 }
 
 impl IoHandler {
-    pub fn new(mem: GuestMemory, sqid: u16, admin_response: mesh::Sender<u16>) -> Self {
+    pub fn new(
+        mem: GuestMemory,
+        sqid: u16,
+        admin_response: mesh::Sender<u16>,
+        driver: VmTaskDriver,
+    ) -> Self {
         Self {
             mem,
             sqid,
             admin_response,
+            timer: PolledTimer::new(&driver),
         }
     }
 
@@ -199,6 +209,10 @@ impl IoHandler {
                     pending().await
                 }
             };
+
+            if state.fault_configuration.fault_active.get() && self.sqid != 0 {
+                panic!("Still receiving reads on IO queue sqid: {}", self.sqid);
+            }
 
             let next_io_completion = async {
                 if state.ios.is_empty() {
@@ -294,6 +308,14 @@ impl IoHandler {
                             "configured fault: io completion panic with sqid: {:?} command: {:?}, completion: {:?} and message: {}",
                             &self.sqid, &command, &completion, &message
                         );
+                    }
+                    IoQueueFaultBehavior::Delay(duration) => {
+                        tracing::info!(
+                            "configured fault: io completion delay of {:?} for completion: {:?}",
+                            &duration,
+                            &completion
+                        );
+                        self.timer.sleep(duration).await;
                     }
                 }
             }
