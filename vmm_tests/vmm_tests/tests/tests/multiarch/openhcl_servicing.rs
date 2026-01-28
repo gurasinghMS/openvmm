@@ -380,7 +380,7 @@ async fn servicing_keepalive_with_io(
     let fault_configuration = FaultConfiguration::new(cell.clone()).with_io_queue_fault(
         IoQueueFaultConfig::new(cell.clone()).with_completion_queue_fault(
             CommandMatchBuilder::new().match_cdw0_opcode(0x2).build(),
-            IoQueueFaultBehavior::Delay(Duration::from_millis(1000)),
+            IoQueueFaultBehavior::Delay(Duration::from_millis(100000)),
         ),
     );
 
@@ -408,8 +408,6 @@ async fn servicing_keepalive_with_io(
     // cmd!(sh, "sh -c '(while :; do cat /dev/sda > /dev/null; done) &'")
     //     .run()
     //     .await?;
-
-    fault_start_updater.set(true).await;
     thread::sleep(Duration::from_secs(5));
 
     let mut io_cmd = agent.command("sh");

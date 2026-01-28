@@ -310,6 +310,7 @@ impl IoHandler {
                         );
                     }
                     IoQueueFaultBehavior::Delay(duration) => {
+                        // panic!("Trying to delay an IO completion on sqid: {}", self.sqid);
                         tracing::info!(
                             "configured fault: io completion delay of {:?} for completion: {:?}",
                             &duration,
