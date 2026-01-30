@@ -929,11 +929,14 @@ impl<A: AerHandler> QueueHandler<A> {
             }
 
             let event = if !self.drain_after_restore {
-                if self.sq.id() != 0 && self.sq.is_full() {
-                    panic!("submission queue is full with sqid: {}", self.sq.id());
-                }
                 // Normal processing of the requests and completions.
                 poll_fn(|cx| {
+                    // if self.sq.id() != 0 && self.sq.is_full() {
+                    //     panic!("submission queue is full with sqid: {}", self.sq.id());
+                    // }
+                    // if self.sq.id() == 2 && self.sq.save().len > 100 {
+                    //     panic!("submission queue is full with sqid: {}", self.sq.id());
+                    // }
                     if !self.sq.is_full() && !self.commands.is_full() {
                         // Prioritize sending AERs to keep the cycle going
                         if self.aer_handler.poll_send_aer() {
@@ -979,6 +982,13 @@ impl<A: AerHandler> QueueHandler<A> {
                 Event::Request(req) => match req {
                     Req::Command(rpc) => {
                         let (mut command, respond) = rpc.split();
+                        if self.sq.id() != 0 {
+                            tracing::info!(
+                                "issuing sqid: {}, command: {:?}",
+                                self.sq.id(),
+                                command
+                            );
+                        }
                         self.commands.insert(&mut command, respond);
                         self.sq.write(command).unwrap();
                         self.stats.issued.increment();

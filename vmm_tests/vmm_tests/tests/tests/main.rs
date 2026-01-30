@@ -25,7 +25,7 @@ mod ttrpc;
 // Tests that currently run only on x86-64 but can compile when targeting
 // any architecture. As our ARM64 support improves these tests should be able to
 // someday run on both x86-64 and ARM64, and be moved into a multi-arch module.
-mod x86_64;
+pub(crate) mod x86_64;
 // Tests that will only ever run when targeting x86-64.
 mod x86_64_exclusive;
 // Tests that will only ever run targeting Aarch64/ARM64.

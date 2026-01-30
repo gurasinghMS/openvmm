@@ -6,6 +6,8 @@
 //! For x86-64, it is supported using both Hyper-V and OpenVMM.
 //! For aarch64, it is supported using Hyper-V.
 
+use crate::x86_64::storage::ExpectedGuestDevice;
+use crate::x86_64::storage::get_device_paths;
 use disk_backend_resources::LayeredDiskHandle;
 use disk_backend_resources::layer::RamDiskLayerHandle;
 use guid::Guid;
@@ -50,6 +52,8 @@ use petri_artifacts_vmm_test::artifacts::openhcl_igvm::LATEST_STANDARD_AARCH64;
 #[allow(unused_imports)]
 use petri_artifacts_vmm_test::artifacts::openhcl_igvm::LATEST_STANDARD_X64;
 use pipette_client::PipetteClient;
+use pipette_client::process::Child;
+use pipette_client::process::Command;
 use pipette_client::process::Stdio;
 use scsidisk_resources::SimpleScsiDiskHandle;
 use std::thread;
@@ -331,7 +335,7 @@ async fn servicing_keepalive_with_namespace_update(
                 ),
         );
 
-    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
+    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration, None).await?;
 
     agent.ping().await?;
     let sh = agent.unix_shell();
@@ -366,6 +370,23 @@ async fn servicing_keepalive_with_namespace_update(
     Ok(())
 }
 
+async fn read_from_disk(agent: &PipetteClient, disk_path: &str) -> Result<Child, anyhow::Error> {
+    let mut io_cmd = agent.command("sh");
+
+    let cmd = format!(
+        "for i in 1 2 3 4 5 6 7 8; do dd if={} of=/dev/null bs=80000000 iflag=direct status=none & done; wait",
+        disk_path
+    );
+
+    io_cmd
+        .args(["-c", &cmd])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let io_child = io_cmd.spawn().await?;
+    Ok(io_child)
+}
+
 /// Verifies behavior when a GET_LOG_PAGE command is delayed during servicing, simulating a
 /// scenario where an AER could be missed after OpenHCL restart.
 #[openvmm_test(openhcl_linux_direct_x64 [LATEST_LINUX_DIRECT_TEST_X64])]
@@ -379,21 +400,45 @@ async fn servicing_keepalive_with_io(
 
     let fault_configuration = FaultConfiguration::new(cell.clone()).with_io_queue_fault(
         IoQueueFaultConfig::new(cell.clone()).with_completion_queue_fault(
-            CommandMatchBuilder::new().match_cdw0_opcode(0x2).build(),
+            CommandMatchBuilder::new().match_cdw0(0, 0).build(),
             IoQueueFaultBehavior::Delay(Duration::from_millis(100000)),
         ),
     );
 
-    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
+    // let fault_configuration = FaultConfiguration::new(cell.clone());
+
+    let scsi_controller_guid = Guid::new_random();
+    let (mut vm, agent) = create_keepalive_test_config(
+        config,
+        fault_configuration,
+        Some(scsi_controller_guid.clone()),
+    )
+    .await?;
 
     agent.ping().await?;
     let sh = agent.unix_shell();
 
     // Make sure the disk showed up.
-    // TODO: At this
     cmd!(sh, "ls /dev/sda").run().await?;
     cmd!(sh, "ls /dev/sdb").run().await?;
     cmd!(sh, "ls /dev/null").run().await?;
+
+    // Get the device paths for the VTL0 NVMe disk.
+    let vtl0_nvme_lun = 1;
+    let disk_size = 2 * 1024 * 1024 * 1024; // 2 GiB
+    const SECTOR_SIZE: u64 = 512;
+    let device_paths = get_device_paths(
+        &agent,
+        scsi_controller_guid,
+        vec![ExpectedGuestDevice {
+            lun: vtl0_nvme_lun,
+            disk_size_sectors: (disk_size / SECTOR_SIZE) as usize,
+            friendly_name: format!("nvme_disk",),
+        }],
+    )
+    .await?;
+    assert!(device_paths.len() == 1);
+    let disk_path = &device_paths[0];
 
     // Add a sleep to let the system stablize. When the guest boots it tries to
     // read from the disk. We don't want that messing up our experiment.
@@ -402,21 +447,7 @@ async fn servicing_keepalive_with_io(
     // Now start the experiment. nvme_emulator will panic when IO queues are
     // being read from.
     fault_start_updater.set(true).await;
-
-    // This should ideally spawn a background task and then return. The guest
-    // should ALWAYS be reading from the disk during the servicing operation.
-    // cmd!(sh, "sh -c '(while :; do cat /dev/sda > /dev/null; done) &'")
-    //     .run()
-    //     .await?;
-    thread::sleep(Duration::from_secs(5));
-
-    let mut io_cmd = agent.command("sh");
-    io_cmd
-        .args(["-c", "while :; do cat /dev/sda > /dev/null; done"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let _io_child = io_cmd.spawn().await?;
+    let _io_child = read_from_disk(&agent, disk_path).await?;
 
     thread::sleep(Duration::from_secs(5));
 
@@ -467,7 +498,7 @@ async fn _servicing_keepalive_with_missed_get_log_page(
                 ),
         );
 
-    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
+    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration, None).await?;
 
     agent.ping().await?;
     let sh = agent.unix_shell();
@@ -634,7 +665,7 @@ async fn apply_fault_with_keepalive(
 ) -> Result<PetriVm<OpenVmmPetriBackend>, anyhow::Error> {
     let mut flags = config.default_servicing_flags();
     flags.enable_nvme_keepalive = true;
-    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration).await?;
+    let (mut vm, agent) = create_keepalive_test_config(config, fault_configuration, None).await?;
 
     agent.ping().await?;
     let sh = agent.unix_shell();
@@ -659,10 +690,12 @@ async fn apply_fault_with_keepalive(
 async fn create_keepalive_test_config(
     config: PetriVmBuilder<OpenVmmPetriBackend>,
     fault_configuration: FaultConfiguration,
+    scsi_instance: Option<Guid>,
 ) -> Result<(PetriVm<OpenVmmPetriBackend>, PipetteClient), anyhow::Error> {
     const NVME_INSTANCE: Guid = guid::guid!("dce4ebad-182f-46c0-8d30-8446c1c62ab3");
     let vtl0_nvme_lun = 1;
-    let scsi_instance = Guid::new_random();
+    let scsi_instance = scsi_instance.unwrap_or_else(Guid::new_random);
+    let disk_size = 2 * 1024 * 1024 * 1024; // 2 GiB
 
     config
         .with_vmbus_redirect(true)
@@ -681,7 +714,7 @@ async fn create_keepalive_test_config(
                             nsid: KEEPALIVE_VTL2_NSID,
                             read_only: false,
                             disk: LayeredDiskHandle::single_layer(RamDiskLayerHandle {
-                                len: Some(256 * 1024),
+                                len: Some(disk_size),
                             })
                             .into_resource(),
                         }],

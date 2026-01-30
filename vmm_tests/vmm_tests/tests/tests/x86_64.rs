@@ -5,7 +5,7 @@
 
 mod openhcl_linux_direct;
 mod openhcl_uefi;
-mod storage;
+pub(crate) mod storage;
 
 use anyhow::Context;
 use net_backend_resources::mac_address::MacAddress;

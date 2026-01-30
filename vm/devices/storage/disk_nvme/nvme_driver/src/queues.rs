@@ -65,6 +65,13 @@ impl SubmissionQueue {
         self.mem
             .write_obj(self.tail as usize * size_of_val(&command), &command);
         self.tail = next_tail;
+
+        // if (self.sqid != 0 && self.tail + 1 == self.len) {
+        //     panic!(
+        //         "submission queue with sqid: {} became full at some point. len is {}. tail is {}, head is {}",
+        //         self.sqid, self.len, self.tail, self.head
+        //     );
+        // }
         Ok(())
     }
 

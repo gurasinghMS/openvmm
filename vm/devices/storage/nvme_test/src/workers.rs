@@ -20,6 +20,7 @@ pub struct IoQueueEntrySizes {
     pub cqe_bits: u8,
 }
 
+// Reduce this to be able to fill up a submission queue more easily for testing.
 const MAX_DATA_TRANSFER_SIZE: usize = 256 * 1024;
 
 const _: () = assert!(

@@ -75,16 +75,16 @@ pub(crate) fn new_test_vtl2_nvme_device(
 }
 
 #[derive(Debug, Clone)]
-struct ExpectedGuestDevice {
-    lun: u32,
-    disk_size_sectors: usize,
+pub(crate) struct ExpectedGuestDevice {
+    pub lun: u32,
+    pub disk_size_sectors: usize,
     #[expect(dead_code)] // Only used in logging via `Debug` trait
-    friendly_name: String,
+    pub friendly_name: String,
 }
 
 /// Get the device paths for the expected devices inside the Linux guest,
 /// verifying that they exist and have the expected size.
-async fn get_device_paths(
+pub(crate) async fn get_device_paths(
     agent: &PipetteClient,
     controller_guid: Guid,
     expected_devices: Vec<ExpectedGuestDevice>,

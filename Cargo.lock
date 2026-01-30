@@ -1371,6 +1371,7 @@ dependencies = [
  "nvme_spec",
  "pal",
  "scsi_buffers",
+ "tracing",
 ]
 
 [[package]]

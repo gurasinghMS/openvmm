@@ -145,7 +145,7 @@ impl InspectTask<IoState> for IoHandler {
     }
 }
 
-const MAX_IO_QUEUE_DEPTH: usize = 8;
+const MAX_IO_QUEUE_DEPTH: usize = 300;
 
 #[derive(Debug, Error)]
 enum HandlerError {
@@ -310,17 +310,28 @@ impl IoHandler {
                         );
                     }
                     IoQueueFaultBehavior::Delay(duration) => {
-                        // panic!("Trying to delay an IO completion on sqid: {}", self.sqid);
+                        // panic!(
+                        //     "Trying to delay an IO completion on sqid: {}, command: {:?}",
+                        //     self.sqid, &command
+                        // );
+
+                        /// Behave like a drop fault for now.
                         tracing::info!(
                             "configured fault: io completion delay of {:?} for completion: {:?}",
                             &duration,
                             &completion
                         );
-                        self.timer.sleep(duration).await;
+                        // continue;
+                        self.timer.sleep(duration.clone()).await;
                     }
                 }
             }
 
+            tracing::info!(
+                "posting io completion: {:?} for command: {:?}",
+                &completion,
+                &command
+            );
             if !state.cq.write(completion)? {
                 assert!(deleting);
                 tracelimit::warn_ratelimited!("dropped i/o completion during queue deletion");

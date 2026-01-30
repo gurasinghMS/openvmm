@@ -86,6 +86,13 @@ impl DiskIo for NvmeDisk {
                 .min(self.namespace.max_transfer_block_count().into())
                 as u32;
 
+            tracing::info!(
+                "NVMe read: sector {}, block_offset {}, this_block_count {}",
+                sector,
+                block_offset,
+                this_block_count
+            );
+
             self.namespace
                 .read(
                     get_cpu_number(),
