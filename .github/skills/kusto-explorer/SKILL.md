@@ -54,9 +54,39 @@ This skill has detailed documentation for the following Kusto resources:
 - **Volume:** ~5 billion events/day; retention ~2+ months
 - **Documentation:** See [azcore.centralus_Fa_UnderhillEventTable.md](azcore.centralus_Fa_UnderhillEventTable.md)
 
+### 3. **HyperVHypervisorTable** (Table)
+- **Location:** `azcore.centralus.kusto.windows.net` → `Fa` database
+- **Purpose:** Hypervisor-level ETW events (partition lifecycle, VP scheduling, memory management, HYPERVISOR_ERROR bugchecks)
+- **Documentation:** See [azcore.centralus_Fa_HyperVHypervisorTable.md](azcore.centralus_Fa_HyperVHypervisorTable.md)
+
+### 4. **HyperVStorageStackTable** (Table)
+- **Location:** `azcore.centralus.kusto.windows.net` → `Fa` database
+- **Purpose:** Storage stack telemetry from NVMe Direct, VHD/VHDX, VMGS, and IO performance providers (~34.8B events/day)
+- **Documentation:** See [azcore.centralus_Fa_HyperVStorageStackTable.md](azcore.centralus_Fa_HyperVStorageStackTable.md)
+
+### 5. **HyperVVmmsTable** (Table)
+- **Location:** `azcore.centralus.kusto.windows.net` → `Fa` database
+- **Purpose:** VMMS management service telemetry — VM lifecycle, live migration, servicing dispatch, stop-container (~148B events/day)
+- **Documentation:** See [azcore.centralus_Fa_HyperVVmmsTable.md](azcore.centralus_Fa_HyperVVmmsTable.md)
+
+### 6. **HyperVVPciTable** (Table)
+- **Location:** `azcore.centralus.kusto.windows.net` → `Fa` database
+- **Purpose:** Virtual PCI bus telemetry — device assignment/teardown, MANA/NVMe/GPU pass-through, VPCI proxy operations (~38B events/day)
+- **Documentation:** See [azcore.centralus_Fa_HyperVVPciTable.md](azcore.centralus_Fa_HyperVVPciTable.md)
+
+### 7. **HyperVWorkerTable** (Table)
+- **Location:** `azcore.centralus.kusto.windows.net` → `Fa` database
+- **Purpose:** VM worker process (vmwp.exe) telemetry — VM start/stop, crashes, UEFI boot events, Underhill servicing, live migration (~132B events/day)
+- **Documentation:** See [azcore.centralus_Fa_HyperVWorkerTable.md](azcore.centralus_Fa_HyperVWorkerTable.md)
+
 **Typical Workflow:**
 1. Use **UnderhillTestServicingQualityMV** to identify failed servicing operations or performance regressions
-2. Use **UnderhillEventTable** to drill into detailed logs for root cause analysis
+2. Use **UnderhillEventTable** to drill into detailed Underhill/OpenHCL logs for root cause analysis
+3. Use **HyperVWorkerTable** for VM lifecycle events (start, stop, crash, servicing, boot)
+4. Use **HyperVVmmsTable** for management-level operations (live migration, stop-container, servicing dispatch)
+5. Use **HyperVVPciTable** to investigate device assignment issues (MANA, NVMe, GPU)
+6. Use **HyperVStorageStackTable** for storage-specific issues (VHD errors, NVMe Direct, IO latency, VMGS)
+7. Use **HyperVHypervisorTable** for hypervisor-level issues (partition creation/deletion, VP config, bugchecks)
 
 ## Query Philosophy: Step-by-Step Verification
 
@@ -201,6 +231,18 @@ Each table/view has its own documentation file named:
 
 - **UnderhillTestServicingQualityMV** — Underhill servicing quality metrics and performance data
   - File: `wdgeventstore_CCA_UnderhillTestServicingQualityMV.md`
+- **UnderhillEventTable** — Detailed runtime event logs from OpenHCL/Underhill components (ETW traces, Rust tracing logs, UEFI firmware logs)
+  - File: `azcore.centralus_Fa_UnderhillEventTable.md`
+- **HyperVHypervisorTable** — ETW events from the Hyper-V hypervisor (hvix64/hvax64/hvaa64), covering partition lifecycle, VP scheduling, memory management, and HYPERVISOR_ERROR bugchecks
+  - File: `azcore.centralus_Fa_HyperVHypervisorTable.md`
+- **HyperVStorageStackTable** — Storage stack telemetry from 15 ETW providers including NVMe Direct, VHD/VHDX, VMGS, and IO performance histograms
+  - File: `azcore.centralus_Fa_HyperVStorageStackTable.md`
+- **HyperVVmmsTable** — VMMS (vmms.exe) management service telemetry covering VM lifecycle, live migration, servicing dispatch, and stop-container operations
+  - File: `azcore.centralus_Fa_HyperVVmmsTable.md`
+- **HyperVVPciTable** — Virtual PCI (vPCI) bus telemetry covering device assignment, teardown, MANA/NVMe/GPU pass-through, and VPCI proxy operations
+  - File: `azcore.centralus_Fa_HyperVVPciTable.md`
+- **HyperVWorkerTable** — VM worker process (vmwp.exe) telemetry covering VM start/stop, crashes, UEFI boot events, Underhill servicing, live migration, and device emulation
+  - File: `azcore.centralus_Fa_HyperVWorkerTable.md`
 
 ## Workflow: Querying Kusto Data
 
