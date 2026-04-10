@@ -1348,3 +1348,319 @@ UnderhillTestServicingQualityMV
 **Document Version:** 1.0  
 **Last Updated:** April 2, 2026  
 **Next Review:** April 9, 2026 (weekly cadence recommended)
+
+---
+
+## Guest-Reported Blackout by Servicing Transition Type
+
+### **VIZ 21: Guest-Reported Blackout by Transition Type** ⭐ CRITICAL
+
+**Purpose:** Compare guest-reported blackout times across the four major servicing transition types (1.6→1.6, 1.6→1.7, 1.7→1.7, 1.7→1.6) to understand guest-perceived impact of each operation  
+**Chart Type:** User-defined  
+**Update Frequency:** Daily
+
+**Query:**
+```kql
+UnderhillTestServicingQualityMV
+| where UnderhillSvcExecutionStartTime > ago(7d)
+| where UnderhillSvcExecutionStatus == "succeeded"
+| extend OldMajorMinor = extract(@"^(\d+\.\d+)", 1, OldVmFirmwareIgvmVersion)
+| extend NewMajorMinor = iff(NewVmFirmwareIgvmVersion == "", OldMajorMinor, extract(@"^(\d+\.\d+)", 1, NewVmFirmwareIgvmVersion))
+| extend TransitionType = strcat(OldMajorMinor, " → ", NewMajorMinor)
+| where TransitionType in ("1.6 → 1.6", "1.6 → 1.7", "1.7 → 1.7", "1.7 → 1.6")
+| extend VersionDetail = iff(NewVmFirmwareIgvmVersion == "", strcat(OldVmFirmwareIgvmVersion, " → ", OldVmFirmwareIgvmVersion), strcat(OldVmFirmwareIgvmVersion, " → ", NewVmFirmwareIgvmVersion))
+| summarize 
+    EventCount = count(),
+    P50_ms = percentile(GuestBlackoutMS, 50),
+    P75_ms = percentile(GuestBlackoutMS, 75),
+    P95_ms = percentile(GuestBlackoutMS, 95),
+    P99_ms = percentile(GuestBlackoutMS, 99),
+    P99_9_ms = percentile(GuestBlackoutMS, 99.9),
+    P99_99_ms = percentile(GuestBlackoutMS, 99.99),
+    GuestBlackout_Max = max(GuestBlackoutMS),
+    GuestBlackout_Avg = round(avg(GuestBlackoutMS), 1)
+    by TransitionType, VersionDetail
+| order by TransitionType asc, EventCount desc
+```
+
+**Data (April 3–10, 2026):**
+
+| Transition Type | Version Detail | Event Count | P50 | P75 | P95 | P99 | P99.9 | P99.99 | Max | Avg |
+|-----------------|----------------|-------------|-----|-----|-----|-----|-------|--------|-----|-----|
+| **1.6 → 1.6** | 1.6.499.0 → 1.6.499.0 | 16,581 | 798ms | 808ms | 827ms | 839ms | 861ms | 1,118ms | 1,159ms | 796.8ms |
+| | 1.6.522.0 → 1.6.522.0 | 5,167 | 365ms | 734ms | 801ms | 839ms | 882ms | 905ms | 905ms | 468.8ms |
+| | 1.6.498.0 → 1.6.498.0 | 50 | 1,252ms | 1,745ms | 2,241ms | 2,563ms | 2,563ms | 2,563ms | 2,563ms | 1,357.4ms |
+| **1.6 → 1.7** | 1.6.522.0 → 1.7.506.0 | 99,500 | 235ms | 410ms | 500ms | 545ms | 1,094ms | 1,856ms | 1,997ms | 298.7ms |
+| | 1.6.517.2 → 1.7.506.0 | 185 | 277ms | 316ms | 493ms | 1,158ms | 1,159ms | 1,159ms | 1,159ms | 297.5ms |
+| | 1.6.522.0 → 1.7.505.0 | 87 | 218ms | 235ms | 269ms | 474ms | 474ms | 474ms | 474ms | 234.3ms |
+| | 1.6.521.0 → 1.7.506.0 | 10 | 280ms | 454ms | 802ms | 802ms | 802ms | 802ms | 802ms | 355.7ms |
+| | 1.6.498.0 → 1.7.506.0 | 1 | 1,120ms | 1,120ms | 1,120ms | 1,120ms | 1,120ms | 1,120ms | 1,120ms | 1,120.0ms |
+| **1.7 → 1.6** | 1.7.506.0 → 1.6.522.0 | 87,821 | 325ms | 647ms | 765ms | 815ms | 872ms | 937ms | 1,671ms | 419.3ms |
+| | 1.7.506.0 → 1.6.521.0 | 13 | 345ms | 349ms | 366ms | 366ms | 366ms | 366ms | 366ms | 342.3ms |
+| | 1.7.506.0 → 1.6.517.2 | 11 | 279ms | 312ms | 499ms | 499ms | 499ms | 499ms | 499ms | 307.5ms |
+| | 1.7.507.0 → 1.6.522.0 | 1 | 283ms | 283ms | 283ms | 283ms | 283ms | 283ms | 283ms | 283.0ms |
+| **1.7 → 1.7** | 1.7.506.0 → 1.7.506.0 | 1,453,464 | 284ms | 440ms | 773ms | 1,147ms | 3,413ms | 8,287ms | 29,328ms | 363.0ms |
+| | 1.7.505.0 → 1.7.505.0 | 516,665 | 225ms | 246ms | 446ms | 587ms | 691ms | 919ms | 1,307ms | 247.5ms |
+| | 1.7.506.0 → 1.7.498.0 | 617 | 301ms | 315ms | 3,697ms | 3,881ms | 4,466ms | 4,466ms | 4,466ms | 685.6ms |
+
+**Key Observations:**
+- **1.6 → 1.6 self-servicing has by far the worst guest blackout** — P50 of 790ms is 3.3× worse than 1.7→1.7 (241ms) and the distribution is tightly clustered around 790-826ms
+- **1.6 → 1.7 upgrades have the best P95/P99** — P95: 500ms, P99: 545ms — tighter than even 1.7→1.7 self-servicing (676ms/1,011ms), suggesting the upgrade path is well-optimized
+- **1.7 → 1.7 self-servicing has the widest tail** — P99 reaches 1,011ms and max is 29.3 seconds, but this is the highest-volume category (1.97M events) so rare outliers are expected
+- **1.7 → 1.6 downgrades are moderately expensive** — P50: 326ms, P95: 765ms — worse than upgrades (1.6→1.7) across all percentiles
+- **1.6 → 1.6 is almost entirely self-servicing** (21,801 of 21,803 events) while 1.7→1.7 includes 617 minor-update events
+
+**Verification Notes:**
+- Self-servicing events (empty `NewVmFirmwareIgvmVersion`) correctly map to same-version transitions (1.6→1.6 and 1.7→1.7)
+- Cross-version transitions (1.6→1.7 and 1.7→1.6) are all firmware change operations
+- Total events across all four types: 2,177,469
+
+---
+
+## Keepalive Status Lookup via UnderhillEventTable
+
+### Purpose
+
+Determine whether a specific servicing operation ran with NVMe keepalive enabled or disabled. This requires querying the `UnderhillEventTable` on the `azcore.centralus` cluster, since keepalive status is not recorded in the CCA materialized view.
+
+### How to Identify Keepalive Status
+
+During a servicing save, OpenHCL emits an `nvme_manager_save` span entry (Target: `underhill_core::dispatch`) whose Fields contain `nvme_keepalive_mode` — either `"true"` (keepalive enabled) or `"false"` (keepalive disabled). This is the single definitive indicator.
+
+Example event:
+```json
+{
+  "Name": "nvme_manager_save",
+  "Target": "underhill_core::dispatch",
+  "Fields": "{\"nvme_keepalive_mode\":\"false\"}"
+}
+```
+
+### Query: Determine Keepalive Status for a Servicing Event
+
+```kql
+let fn_nodeId = "<NODE_ID>";
+let fn_containerId = "<CONTAINER_ID>";  // This is VmName in UnderhillEventTable
+let fn_servicingTime = datetime(<SERVICING_TIMESTAMP>);  // UnderhillSvcExecutionStartTime from CCA
+let fn_startTime = fn_servicingTime;
+let fn_endTime = fn_servicingTime + 1m;
+UnderhillEventTable
+| where PreciseTimeStamp between (fn_startTime .. fn_endTime)
+| where NodeId == fn_nodeId and VmName == fn_containerId
+| where Message has "nvme_manager_save"
+| extend ParsedMsg = parse_json(Message)
+| extend InnerMsg = parse_json(tostring(ParsedMsg.Message))
+| where toint(InnerMsg.op_code) == 1  // Span enter only
+| extend Fields = parse_json(tostring(ParsedMsg.Fields))
+| extend NvmeKeepAliveMode = tostring(Fields.nvme_keepalive_mode)
+| summarize arg_min(PreciseTimeStamp, NvmeKeepAliveMode)
+| project PreciseTimeStamp, NvmeKeepAliveMode
+```
+
+### Example
+
+For VM `bc18b17a-a24e-4710-97a8-9c03a88cec91` on node `c1e5d5ff-6466-2e39-941c-55c0fc9319a6` at `2026-04-10T09:34:20.890Z`:
+
+| PreciseTimeStamp | NvmeKeepAliveMode |
+|------------------|-------------------|
+| 09:34:21.530Z | false |
+
+---
+
+## Guest Blackout by Transition Type with Keepalive Breakdown
+
+### **VIZ 22: Guest Blackout by Transition Type with 1.7→1.7 Keepalive Split** ⭐ CRITICAL
+
+**Purpose:** Compare guest-reported blackout across all servicing transition types, with 1.7→1.7 further split by NVMe keepalive status (KA = enabled, No KA = disabled, Err = status unknown)  
+**Chart Type:** User-defined  
+**Update Frequency:** Daily
+
+**Methodology:** Keepalive status is not in the CCA materialized view. This query cross-cluster joins `UnderhillTestServicingQualityMV` (CCA) with `UnderhillEventTable` (azcore.centralus/Fa) by building a per-VmId keepalive lookup from `nvme_manager_save` span entries. For each VmId, the earliest `nvme_keepalive_mode` observation is taken via `arg_min`. VMs with no keepalive data in UnderhillEventTable are classified as "Err".
+
+**Query:**
+```kql
+let keepaliveLookup = cluster('azcore.centralus.kusto.windows.net').database('Fa').UnderhillEventTable
+| where PreciseTimeStamp > ago(7d)
+| where Message has "nvme_manager_save"
+| extend ParsedMsg = parse_json(Message)
+| extend InnerMsg = parse_json(tostring(ParsedMsg.Message))
+| where toint(InnerMsg.op_code) == 1  // Span enter only
+| extend Fields = parse_json(tostring(ParsedMsg.Fields))
+| extend NvmeKeepAlive = tostring(Fields.nvme_keepalive_mode)
+| where NvmeKeepAlive in ("true", "false")  // Only definitive status
+| summarize arg_min(PreciseTimeStamp, NvmeKeepAlive) by VmId
+| project VmId, NvmeKeepAlive;
+let baseData = UnderhillTestServicingQualityMV
+| where UnderhillSvcExecutionStartTime > ago(7d)
+| where UnderhillSvcExecutionStatus == "succeeded"
+| extend OldMajorMinor = extract(@"^(\d+\.\d+)", 1, OldVmFirmwareIgvmVersion)
+| extend NewMajorMinor = iff(NewVmFirmwareIgvmVersion == "", OldMajorMinor, extract(@"^(\d+\.\d+)", 1, NewVmFirmwareIgvmVersion))
+| extend TransitionType = strcat(OldMajorMinor, " → ", NewMajorMinor)
+| where TransitionType in ("1.6 → 1.6", "1.6 → 1.7", "1.7 → 1.7", "1.7 → 1.6");
+let otherTransitions = baseData
+| where TransitionType != "1.7 → 1.7"
+| summarize 
+    EventCount = count(),
+    P50_ms = percentile(GuestBlackoutMS, 50),
+    P75_ms = percentile(GuestBlackoutMS, 75),
+    P95_ms = percentile(GuestBlackoutMS, 95),
+    P99_ms = percentile(GuestBlackoutMS, 99),
+    P99_9_ms = percentile(GuestBlackoutMS, 99.9),
+    P99_99_ms = percentile(GuestBlackoutMS, 99.99),
+    GuestBlackout_Max = max(GuestBlackoutMS),
+    GuestBlackout_Avg = round(avg(GuestBlackoutMS), 1)
+    by TransitionType
+| extend SortOrder = case(
+    TransitionType == "1.6 → 1.6", 1,
+    TransitionType == "1.6 → 1.7", 2,
+    TransitionType == "1.7 → 1.6", 3,
+    10);
+let v17Overall = baseData
+| where TransitionType == "1.7 → 1.7"
+| summarize 
+    EventCount = count(),
+    P50_ms = percentile(GuestBlackoutMS, 50),
+    P75_ms = percentile(GuestBlackoutMS, 75),
+    P95_ms = percentile(GuestBlackoutMS, 95),
+    P99_ms = percentile(GuestBlackoutMS, 99),
+    P99_9_ms = percentile(GuestBlackoutMS, 99.9),
+    P99_99_ms = percentile(GuestBlackoutMS, 99.99),
+    GuestBlackout_Max = max(GuestBlackoutMS),
+    GuestBlackout_Avg = round(avg(GuestBlackoutMS), 1)
+| extend TransitionType = "1.7 → 1.7", SortOrder = 4;
+let v17ByKA = baseData
+| where TransitionType == "1.7 → 1.7"
+| join kind=leftouter keepaliveLookup on VmId
+| extend KAStatus = case(
+    NvmeKeepAlive == "true", "1.7 → 1.7 (KA)",
+    NvmeKeepAlive == "false", "1.7 → 1.7 (No KA)",
+    "1.7 → 1.7 (Err)"
+)
+| summarize 
+    EventCount = count(),
+    P50_ms = percentile(GuestBlackoutMS, 50),
+    P75_ms = percentile(GuestBlackoutMS, 75),
+    P95_ms = percentile(GuestBlackoutMS, 95),
+    P99_ms = percentile(GuestBlackoutMS, 99),
+    P99_9_ms = percentile(GuestBlackoutMS, 99.9),
+    P99_99_ms = percentile(GuestBlackoutMS, 99.99),
+    GuestBlackout_Max = max(GuestBlackoutMS),
+    GuestBlackout_Avg = round(avg(GuestBlackoutMS), 1)
+    by KAStatus
+| extend TransitionType = KAStatus
+| extend SortOrder = case(
+    TransitionType == "1.7 → 1.7 (KA)", 5,
+    TransitionType == "1.7 → 1.7 (No KA)", 6,
+    7);
+union otherTransitions, v17Overall, v17ByKA
+| project TransitionType, EventCount, P50_ms, P75_ms, P95_ms, P99_ms, P99_9_ms, P99_99_ms, GuestBlackout_Max, GuestBlackout_Avg, SortOrder
+| order by SortOrder asc
+```
+
+**Data (April 3–10, 2026):**
+
+| Transition Type | Event Count | P50 | P75 | P95 | P99 | P99.9 | P99.99 | Max | Avg |
+|-----------------|-------------|-----|-----|-----|-----|-------|--------|-----|-----|
+| 1.6 → 1.6 | 21,806 | 790ms | 805ms | 826ms | 842ms | 1,320ms | 2,241ms | 2,563ms | 720.4ms |
+| 1.6 → 1.7 | 102,256 | 236ms | 408ms | 500ms | 545ms | 1,102ms | 1,855ms | 1,997ms | 298.5ms |
+| 1.7 → 1.6 | 90,201 | 327ms | 645ms | 764ms | 815ms | 872ms | 932ms | 1,671ms | 418.0ms |
+| **1.7 → 1.7** | **1,981,640** | **242ms** | **398ms** | **679ms** | **1,015ms** | **3,385ms** | **7,010ms** | **29,328ms** | **333.1ms** |
+| 1.7 → 1.7 (KA) | 1,760,094 | 237ms | 388ms | 620ms | 935ms | 1,011ms | 1,149ms | 5,227ms | 311.6ms |
+| 1.7 → 1.7 (No KA) | 118,974 | 233ms | 439ms | 499ms | 948ms | 1,016ms | 1,455ms | 1,544ms | 304.1ms |
+| 1.7 → 1.7 (Err) | 102,572 | 419ms | 839ms | 2,256ms | 3,545ms | 9,569ms | 23,372ms | 29,328ms | 735.2ms |
+
+**Key Findings:**
+
+1. **1.7→1.7 (KA) vs (No KA) — Similar median, different P95:**
+   - P50 nearly identical: 237ms (KA) vs 233ms (No KA)
+   - No KA has *better* P95: 499ms vs 620ms — simpler save path without keepalive may reduce variation
+   - Both have similar P99: 935ms vs 948ms
+
+2. **1.7→1.7 (Err) is dramatically worse — driving the overall tail:**
+   - P50 already 419ms (1.8× worse than KA/No KA)
+   - P95 at 2,256ms (3.6× worse than KA)
+   - P99.99 at 23.4 seconds — extreme outliers
+   - These are 102.5K events from 237 VMs with **empty VmGeneration, SKU, and VmSku metadata** — a distinct class of VMs where keepalive status is not available in UnderhillEventTable
+   - Without these Err VMs, the 1.7→1.7 overall P99 would drop from 1,015ms to ~935ms
+
+3. **1.6→1.6 remains the worst steady-state performer** (P50: 790ms)
+
+4. **1.6→1.7 upgrades remain the best P95** across all categories (500ms)
+
+**Action Items:**
+- Investigate the Err category (237 VMs with empty metadata) — these are driving the entire 1.7→1.7 tail and inflating overall P99/P99.9 significantly
+- Investigate why No KA has better P95 than KA (499ms vs 620ms) — is the keepalive save/restore path adding overhead at the tail?
+
+---
+
+## 1.7→1.7 Transitions by Minor Version and Keepalive Status
+
+### **VIZ 23: 1.7→1.7 Minor Version × Keepalive Breakdown** ⭐ CRITICAL
+
+**Purpose:** Break down 1.7→1.7 self-servicing operations by exact minor version AND keepalive status (KA / No KA / Err)  
+**Chart Type:** User-defined  
+**Update Frequency:** Daily
+
+**Query:**
+```kql
+let keepaliveLookup = cluster('azcore.centralus.kusto.windows.net').database('Fa').UnderhillEventTable
+| where PreciseTimeStamp > ago(7d)
+| where Message has "nvme_manager_save"
+| extend ParsedMsg = parse_json(Message)
+| extend InnerMsg = parse_json(tostring(ParsedMsg.Message))
+| where toint(InnerMsg.op_code) == 1  // Span enter only
+| extend Fields = parse_json(tostring(ParsedMsg.Fields))
+| extend NvmeKeepAlive = tostring(Fields.nvme_keepalive_mode)
+| where NvmeKeepAlive in ("true", "false")
+| summarize arg_min(PreciseTimeStamp, NvmeKeepAlive) by VmId
+| project VmId, NvmeKeepAlive;
+UnderhillTestServicingQualityMV
+| where UnderhillSvcExecutionStartTime > ago(7d)
+| where UnderhillSvcExecutionStatus == "succeeded"
+| extend OldMajorMinor = extract(@"^(\d+\.\d+)", 1, OldVmFirmwareIgvmVersion)
+| extend NewMajorMinor = iff(NewVmFirmwareIgvmVersion == "", OldMajorMinor, extract(@"^(\d+\.\d+)", 1, NewVmFirmwareIgvmVersion))
+| where OldMajorMinor == "1.7" and NewMajorMinor == "1.7"
+| extend VersionDetail = iff(NewVmFirmwareIgvmVersion == "", strcat(OldVmFirmwareIgvmVersion, " → ", OldVmFirmwareIgvmVersion), strcat(OldVmFirmwareIgvmVersion, " → ", NewVmFirmwareIgvmVersion))
+| join kind=leftouter keepaliveLookup on VmId
+| extend KAStatus = case(
+    NvmeKeepAlive == "true", "KA",
+    NvmeKeepAlive == "false", "No KA",
+    "Err"
+)
+| summarize 
+    EventCount = count(),
+    P50_ms = percentile(GuestBlackoutMS, 50),
+    P75_ms = percentile(GuestBlackoutMS, 75),
+    P95_ms = percentile(GuestBlackoutMS, 95),
+    P99_ms = percentile(GuestBlackoutMS, 99),
+    P99_9_ms = percentile(GuestBlackoutMS, 99.9),
+    P99_99_ms = percentile(GuestBlackoutMS, 99.99),
+    GuestBlackout_Max = max(GuestBlackoutMS),
+    GuestBlackout_Avg = round(avg(GuestBlackoutMS), 1)
+    by VersionDetail, KAStatus
+| order by VersionDetail asc, KAStatus asc
+```
+
+**Data (April 3–10, 2026):**
+
+| Version Detail | KA Status | Events | P50 | P75 | P95 | P99 | P99.9 | P99.99 | Max | Avg |
+|----------------|-----------|--------|-----|-----|-----|-----|-------|--------|-----|-----|
+| 1.7.505.0 → 1.7.505.0 | KA | 510,177 | 225ms | 246ms | 447ms | 587ms | 691ms | 919ms | 1,307ms | 247.4ms |
+| 1.7.506.0 → 1.7.498.0 | KA | 617 | 301ms | 315ms | 3,697ms | 3,881ms | 4,466ms | 4,466ms | 4,466ms | 685.6ms |
+| 1.7.506.0 → 1.7.506.0 | Err | 103,107 | 420ms | 840ms | 2,278ms | 3,538ms | 9,509ms | 23,372ms | 29,328ms | 734.2ms |
+| 1.7.506.0 → 1.7.506.0 | KA | 1,249,990 | 276ms | 423ms | 671ms | 951ms | 1,018ms | 1,115ms | 5,227ms | 337.6ms |
+| 1.7.506.0 → 1.7.506.0 | No KA | 119,181 | 233ms | 439ms | 499ms | 948ms | 1,016ms | 1,455ms | 1,544ms | 303.9ms |
+
+**Key Findings:**
+
+1. **1.7.505.0 self-servicing is exclusively KA and is the best performer:**
+   - P50: 225ms, P95: 447ms — all 510K events with keepalive enabled
+   - No "No KA" or "Err" rows exist for this version
+
+2. **1.7.506.0 self-servicing KA vs No KA:**
+   - No KA has better P95: 499ms vs 671ms (same pattern as aggregate)
+   - No KA also wins at P50: 233ms vs 276ms
+   - Err category (103K events) has P95: 2,278ms — still the worst
+
+3. **1.7.506.0 → 1.7.498.0 minor downgrade is all KA with pathological tail:**
+   - Only 617 events but P95: 3,697ms — something wrong with this code path
